@@ -14,7 +14,7 @@
         "extensions": [],
         "skills": [],
         "prompts": [],
-        "themes": []
+        "themes": ["./themes"]
     },
     "license": "MIT",
     "packageManager": "pnpm@10.33.0",
