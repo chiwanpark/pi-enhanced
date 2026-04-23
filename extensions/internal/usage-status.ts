@@ -25,6 +25,15 @@ export type UsageInfo = {
 	secondaryResetAt?: string | undefined;
 	primaryText?: string | undefined;
 	secondaryText?: string | undefined;
+	/** Short extra text rendered alongside the primary bar (e.g. "$228.69 / $1000.00"). */
+	primaryDetail?: string | undefined;
+	/** Short extra text rendered alongside the secondary bar. */
+	secondaryDetail?: string | undefined;
+	/** Very compact variant used by the statusbar when space is tight. */
+	primaryCompactDetail?: string | undefined;
+	secondaryCompactDetail?: string | undefined;
+	/** Hide the secondary row entirely (e.g. Anthropic Enterprise extra usage has no matching counterpart). */
+	hideSecondary?: boolean | undefined;
 	error?: string | undefined;
 };
 
@@ -312,6 +321,29 @@ export async function fetchCodexUsage(auth: AuthData): Promise<UsageInfo> {
 	};
 }
 
+function formatAnthropicCurrency(valueInCents: number, currency: string | undefined): string {
+	const usd = valueInCents / 100;
+	const formatter = new Intl.NumberFormat("en-US", {
+		style: "currency",
+		currency: currency || "USD",
+		minimumFractionDigits: 2,
+		maximumFractionDigits: 2,
+	});
+	try {
+		return formatter.format(usd);
+	} catch {
+		return `$${usd.toFixed(2)}`;
+	}
+}
+
+function formatAnthropicCurrencyCompact(valueInCents: number, currency: string | undefined): string {
+	const usd = valueInCents / 100;
+	const symbol = (currency || "USD") === "USD" ? "$" : `${currency} `;
+	if (usd >= 1000) return `${symbol}${Math.round(usd / 100) / 10}k`.replace(".0k", "k");
+	if (usd >= 100) return `${symbol}${Math.round(usd)}`;
+	return `${symbol}${usd.toFixed(2)}`;
+}
+
 export async function fetchClaudeUsage(auth: AuthData): Promise<UsageInfo> {
 	const token = auth.anthropic?.access;
 	if (!token) throw new Error("missing Anthropic access token");
@@ -327,15 +359,54 @@ export async function fetchClaudeUsage(auth: AuthData): Promise<UsageInfo> {
 		throw new Error(result.error ?? "failed to fetch Anthropic usage");
 	}
 
+	const fiveHour = result.data?.five_hour;
+	const sevenDay = result.data?.seven_day;
+	const extraUsage = result.data?.extra_usage;
+
+	// Enterprise / "extra usage" plans expose a dollar-denominated monthly cap instead of
+	// the default 5h / 7d rolling windows, which come back as `null`.
+	const hasRollingWindows = fiveHour != null || sevenDay != null;
+	if (
+		!hasRollingWindows &&
+		extraUsage &&
+		extraUsage.is_enabled === true &&
+		typeof extraUsage.monthly_limit === "number" &&
+		typeof extraUsage.used_credits === "number"
+	) {
+		const currency = typeof extraUsage.currency === "string" ? extraUsage.currency : "USD";
+		const utilization =
+			typeof extraUsage.utilization === "number" && Number.isFinite(extraUsage.utilization)
+				? extraUsage.utilization
+				: extraUsage.monthly_limit > 0
+					? (extraUsage.used_credits / extraUsage.monthly_limit) * 100
+					: null;
+		const used = formatAnthropicCurrency(extraUsage.used_credits, currency);
+		const limit = formatAnthropicCurrency(extraUsage.monthly_limit, currency);
+		const compactUsed = formatAnthropicCurrencyCompact(extraUsage.used_credits, currency);
+		const compactLimit = formatAnthropicCurrencyCompact(extraUsage.monthly_limit, currency);
+		const resetAt = typeof extraUsage.resets_at === "string" ? extraUsage.resets_at : undefined;
+
+		return {
+			provider: "anthropic",
+			primaryLabel: "extra usage",
+			primaryPercent: readPercent(utilization),
+			secondaryLabel: "",
+			secondaryPercent: null,
+			primaryResetAt: resetAt,
+			primaryDetail: `${used} / ${limit}`,
+			primaryCompactDetail: `${compactUsed}/${compactLimit}`,
+			hideSecondary: true,
+		};
+	}
+
 	return {
 		provider: "anthropic",
 		primaryLabel: PROVIDER_META.anthropic.primaryLabel,
-		primaryPercent: readPercent(result.data?.five_hour?.utilization),
+		primaryPercent: readPercent(fiveHour?.utilization),
 		secondaryLabel: PROVIDER_META.anthropic.secondaryLabel,
-		secondaryPercent: readPercent(result.data?.seven_day?.utilization),
-		primaryResetAt: typeof result.data?.five_hour?.resets_at === "string" ? result.data.five_hour.resets_at : undefined,
-		secondaryResetAt:
-			typeof result.data?.seven_day?.resets_at === "string" ? result.data.seven_day.resets_at : undefined,
+		secondaryPercent: readPercent(sevenDay?.utilization),
+		primaryResetAt: typeof fiveHour?.resets_at === "string" ? fiveHour.resets_at : undefined,
+		secondaryResetAt: typeof sevenDay?.resets_at === "string" ? sevenDay.resets_at : undefined,
 	};
 }
 

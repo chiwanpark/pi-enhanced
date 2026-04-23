@@ -71,19 +71,50 @@ function formatCompactTokens(value: number): string {
 	return `${Math.round(value)}`;
 }
 
+function formatLimitPart(
+	theme: Pick<Theme, "fg">,
+	label: string | undefined,
+	percent: number | null | undefined,
+	textOverride: string | undefined,
+	detail: string | undefined,
+): string | null {
+	const value = textOverride ?? percentText(percent);
+	if (!value) return null;
+	const labelPart = label ? `${theme.fg("dim", label)} ` : "";
+	const detailPart = detail ? ` ${theme.fg("dim", detail)}` : "";
+	return `${labelPart}${theme.fg(colorForPercent(percent), value)}${detailPart}`;
+}
+
 function formatUsageSegment(
 	theme: Pick<Theme, "fg">,
 	usage: UsageInfo | undefined,
 	error: string | undefined,
 ): string | null {
 	if (usage) {
-		const primary = usage.primaryText ?? percentText(usage.primaryPercent) ?? "--";
-		const secondary = usage.secondaryText ?? percentText(usage.secondaryPercent) ?? "--";
+		const parts: string[] = [];
 
-		return [
-			`${theme.fg("dim", usage.primaryLabel)} ${theme.fg(colorForPercent(usage.primaryPercent), primary)}`,
-			`${theme.fg("dim", usage.secondaryLabel)} ${theme.fg(colorForPercent(usage.secondaryPercent), secondary)}`,
-		].join(theme.fg("dim", " · "));
+		const primaryPart = formatLimitPart(
+			theme,
+			usage.primaryLabel,
+			usage.primaryPercent,
+			usage.primaryText,
+			usage.primaryCompactDetail ?? usage.primaryDetail,
+		);
+		if (primaryPart) parts.push(primaryPart);
+
+		if (!usage.hideSecondary) {
+			const secondaryPart = formatLimitPart(
+				theme,
+				usage.secondaryLabel,
+				usage.secondaryPercent,
+				usage.secondaryText,
+				usage.secondaryCompactDetail ?? usage.secondaryDetail,
+			);
+			if (secondaryPart) parts.push(secondaryPart);
+		}
+
+		if (parts.length === 0) return null;
+		return parts.join(theme.fg("dim", " · "));
 	}
 
 	if (error) {
@@ -98,16 +129,34 @@ function formatContextSegment(
 	percent: number | null | undefined,
 	tokens: number | null | undefined,
 	contextWindow: number | undefined,
-): string {
-	const percentLabel = percent == null ? "?" : `${Math.round(percent)}%`;
-	const usedTokens = tokens == null ? "?" : formatCompactTokens(tokens);
-	const windowTokens = contextWindow == null ? "?" : formatCompactTokens(contextWindow);
+): string | null {
+	const hasPercent = typeof percent === "number" && Number.isFinite(percent);
+	const hasTokens = typeof tokens === "number" && Number.isFinite(tokens);
+	const hasWindow = typeof contextWindow === "number" && Number.isFinite(contextWindow);
 
-	return [
-		theme.fg(colorForPercent(percent), percentLabel),
-		theme.fg("dim", "used"),
-		theme.fg("dim", `(${usedTokens} / ${windowTokens})`),
-	].join(" ");
+	// If every component is unavailable, render nothing.
+	if (!hasPercent && !hasTokens && !hasWindow) return null;
+
+	const parts: string[] = [];
+	if (hasPercent) {
+		parts.push(theme.fg(colorForPercent(percent), `${Math.round(percent as number)}%`));
+		parts.push(theme.fg("dim", "used"));
+	}
+
+	if (hasTokens && hasWindow) {
+		parts.push(
+			theme.fg("dim", `(${formatCompactTokens(tokens as number)} / ${formatCompactTokens(contextWindow as number)})`),
+		);
+	} else if (hasTokens) {
+		parts.push(theme.fg("dim", `(${formatCompactTokens(tokens as number)})`));
+	} else if (hasWindow) {
+		// Only the context window is known. Without a percent or token count, reporting a bare
+		// window size is noisy, so omit the segment entirely.
+		if (!hasPercent) return null;
+		parts.push(theme.fg("dim", `(? / ${formatCompactTokens(contextWindow as number)})`));
+	}
+
+	return parts.join(" ");
 }
 
 export default function statusbarExtension(pi: ExtensionAPI) {
@@ -222,7 +271,13 @@ export default function statusbarExtension(pi: ExtensionAPI) {
 					segments.push(theme.fg("dim", cwd));
 					if (branch) segments.push(theme.fg("dim", branch));
 
-					segments.push(formatContextSegment(theme, contextUsage?.percent, contextUsage?.tokens, contextWindow));
+					const contextSegment = formatContextSegment(
+						theme,
+						contextUsage?.percent,
+						contextUsage?.tokens,
+						contextWindow,
+					);
+					if (contextSegment) segments.push(contextSegment);
 
 					const line = segments.join(theme.fg("dim", " · "));
 					return [truncateToWidth(line, width, theme.fg("dim", "…")), ""];

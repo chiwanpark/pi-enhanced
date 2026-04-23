@@ -217,13 +217,16 @@ function formatUsageLine(
 	usedPercent: number | null | undefined,
 	resetAt: string | undefined,
 	textOverride?: string | undefined,
+	detail?: string | undefined,
 ): string {
+	const detailSuffix = detail ? ` ${theme.fg("dim", `(${detail})`)}` : "";
+
 	if (textOverride === "∞") {
-		return `${renderRemainingBar(theme, 100)} ${theme.fg("success", "∞ left")}`;
+		return `${renderRemainingBar(theme, 100)} ${theme.fg("success", "∞ left")}${detailSuffix}`;
 	}
 
 	if (usedPercent == null || !Number.isFinite(usedPercent)) {
-		return `${theme.fg("warning", "unavailable")}`;
+		return `${theme.fg("warning", "unavailable")}${detailSuffix}`;
 	}
 
 	const remaining = Math.max(0, Math.min(100, 100 - usedPercent));
@@ -234,15 +237,20 @@ function formatUsageLine(
 		theme.fg("dim", formatResetAt(resetAt)),
 	]
 		.join(" ")
-		.trimEnd();
+		.trimEnd()
+		.concat(detailSuffix);
 }
 
 function buildStatusBox(theme: Theme, report: StatusReport): string[] {
 	const usage = report.usage;
 	const usageMeta = usage ? PROVIDER_META[usage.provider] : undefined;
-	const primaryLabel = usageMeta ? `${usageMeta.primaryLabel} limit:` : "Primary limit:";
-	const secondaryLabel = usageMeta ? `${usageMeta.secondaryLabel} limit:` : "Secondary limit:";
-	const rows = [
+	// Prefer the runtime labels on UsageInfo when present so plan-specific cases
+	// (e.g. Anthropic Enterprise extra usage) can override the static metadata.
+	const primaryLabelText = usage?.primaryLabel || usageMeta?.primaryLabel || "Primary";
+	const secondaryLabelText = usage?.secondaryLabel || usageMeta?.secondaryLabel || "Secondary";
+	const primaryLabel = `${primaryLabelText} limit:`;
+	const secondaryLabel = `${secondaryLabelText} limit:`;
+	const rows: Array<{ label: string; value: string }> = [
 		{
 			label: "Model:",
 			value: report.modelSummary,
@@ -267,16 +275,24 @@ function buildStatusBox(theme: Theme, report: StatusReport): string[] {
 		{
 			label: primaryLabel,
 			value: usage
-				? formatUsageLine(theme, usage.primaryPercent, usage.primaryResetAt, usage.primaryText)
-				: theme.fg("warning", report.usageError ?? "unavailable"),
-		},
-		{
-			label: secondaryLabel,
-			value: usage
-				? formatUsageLine(theme, usage.secondaryPercent, usage.secondaryResetAt, usage.secondaryText)
+				? formatUsageLine(theme, usage.primaryPercent, usage.primaryResetAt, usage.primaryText, usage.primaryDetail)
 				: theme.fg("warning", report.usageError ?? "unavailable"),
 		},
 	];
+	if (!usage?.hideSecondary) {
+		rows.push({
+			label: secondaryLabel,
+			value: usage
+				? formatUsageLine(
+						theme,
+						usage.secondaryPercent,
+						usage.secondaryResetAt,
+						usage.secondaryText,
+						usage.secondaryDetail,
+					)
+				: theme.fg("warning", report.usageError ?? "unavailable"),
+		});
+	}
 
 	const labelWidth = Math.max(...rows.map((row) => row.label.length), 12) + 2;
 	const contentLines = [

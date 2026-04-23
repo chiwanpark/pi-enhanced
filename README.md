@@ -11,3 +11,4 @@ pi install git:https://github.com/chiwanpark/pi-enhanced
 ## References
 
 - [vinyroli/pi-codex-theme](https://github.com/vinyroli/pi-codex-theme)
+- [ajarellanod/pi-usage-bars](https://github.com/ajarellanod/pi-usage-bars)
