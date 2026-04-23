@@ -1,35 +1,53 @@
 {
-    "name": "pi-enhanced",
-    "version": "0.1.0",
-    "description": "My own Pi skills, extensions, and themes",
-    "main": "index.js",
-    "scripts": {},
-    "keywords": ["pi-package"],
-    "author": {
-        "name": "Chiwan Park",
-        "email": "chiwanpark@hotmail.com",
-        "url": "https://chiwanpark.com"
-    },
-    "pi": {
-        "extensions": [],
-        "skills": [],
-        "prompts": [],
-        "themes": ["./themes"]
-    },
-    "license": "MIT",
-    "packageManager": "pnpm@10.33.0",
-    "devDependencies": {
-        "@mariozechner/pi-agent-core": "^0.68.1",
-        "@mariozechner/pi-ai": "^0.68.1",
-        "@mariozechner/pi-coding-agent": "^0.68.1",
-        "@mariozechner/pi-tui": "^0.68.1",
-        "@types/node": "^25.6.0",
-        "typescript": "^6.0.3"
-    },
-    "peerDependencies": {
-        "@mariozechner/pi-agent-core": "^0.68.1",
-        "@mariozechner/pi-ai": "^0.68.1",
-        "@mariozechner/pi-coding-agent": "^0.68.1",
-        "@mariozechner/pi-tui": "^0.68.1"
-    }
+  "name": "pi-enhanced",
+  "version": "0.1.0",
+  "description": "My own Pi skills, extensions, and themes",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier . --write",
+    "format:check": "prettier . --check"
+  },
+  "keywords": [
+    "pi-package"
+  ],
+  "author": {
+    "name": "Chiwan Park",
+    "email": "chiwanpark@hotmail.com",
+    "url": "https://chiwanpark.com"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions/index.ts"
+    ],
+    "skills": [],
+    "prompts": [],
+    "themes": [
+      "./themes"
+    ]
+  },
+  "license": "MIT",
+  "packageManager": "pnpm@10.33.0",
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@mariozechner/pi-agent-core": "^0.68.1",
+    "@mariozechner/pi-ai": "^0.68.1",
+    "@mariozechner/pi-coding-agent": "^0.68.1",
+    "@mariozechner/pi-tui": "^0.68.1",
+    "@types/node": "^25.6.0",
+    "eslint": "^10.2.1",
+    "eslint-config-prettier": "^10.1.8",
+    "globals": "^17.5.0",
+    "prettier": "^3.8.3",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.59.0"
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-agent-core": "^0.68.1",
+    "@mariozechner/pi-ai": "^0.68.1",
+    "@mariozechner/pi-coding-agent": "^0.68.1",
+    "@mariozechner/pi-tui": "^0.68.1"
+  }
 }
