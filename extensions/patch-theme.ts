@@ -3,6 +3,7 @@ import {
 	AssistantMessageComponent,
 	DynamicBorder,
 	LoginDialogComponent,
+	ToolExecutionComponent,
 	UserMessageComponent,
 	ModelSelectorComponent,
 	OAuthSelectorComponent,
@@ -19,6 +20,7 @@ const ANSI_RESET = "\x1b[0m";
 const CARET = "❯ ";
 const THINKING_INDENT = "  ";
 const THINKING_INDENT_PATCH = Symbol.for("pi-enhanced.thinking-indent-patch");
+const TOOL_OUTPUT_PADDING_X = 2;
 
 type ThemeColorValue = string | number;
 
@@ -60,6 +62,13 @@ type UserMessageComponentLike = {
 	render(width: number): string[];
 	contentBox?: unknown;
 	__piEnhancedUserIndentPatched?: boolean | undefined;
+};
+
+type ToolExecutionComponentLike = {
+	render(width: number): string[];
+	contentBox?: unknown;
+	contentText?: unknown;
+	__piEnhancedToolOutputPaddingPatched?: boolean | undefined;
 };
 
 type PaddedComponentLike = {
@@ -152,6 +161,17 @@ function markUserIndentPatched(prototype: { __piEnhancedUserIndentPatched?: bool
 	}
 
 	prototype.__piEnhancedUserIndentPatched = true;
+	return false;
+}
+
+function markToolOutputPaddingPatched(prototype: {
+	__piEnhancedToolOutputPaddingPatched?: boolean | undefined;
+}): boolean {
+	if (prototype.__piEnhancedToolOutputPaddingPatched) {
+		return true;
+	}
+
+	prototype.__piEnhancedToolOutputPaddingPatched = true;
 	return false;
 }
 
@@ -335,6 +355,19 @@ function applyEditorBackground(component: unknown, bgAnsi: string): void {
 	renderable.setBgFn((content) => applyBackground(content, bgAnsi));
 }
 
+function patchToolExecutionPrototype(prototype: ToolExecutionComponentLike): void {
+	if (markToolOutputPaddingPatched(prototype)) {
+		return;
+	}
+
+	const originalRender = prototype.render as RenderMethod<ToolExecutionComponentLike>;
+	prototype.render = function render(width: number): string[] {
+		setHorizontalPadding(this.contentBox, TOOL_OUTPUT_PADDING_X);
+		setHorizontalPadding(this.contentText, TOOL_OUTPUT_PADDING_X);
+		return originalRender.call(this, width);
+	};
+}
+
 function patchUserMessagePrototype(prototype: UserMessageComponentLike, getTheme: () => Theme): void {
 	if (markUserIndentPatched(prototype)) {
 		return;
@@ -422,6 +455,7 @@ export function installThemePatches(source?: ThemeSource): void {
 
 	patchLoaderPrototype(Loader.prototype);
 	patchAssistantMessagePrototype(AssistantMessageComponent.prototype as unknown as AssistantMessageComponentLike);
+	patchToolExecutionPrototype(ToolExecutionComponent.prototype as unknown as ToolExecutionComponentLike);
 	patchUserMessagePrototype(UserMessageComponent.prototype as unknown as UserMessageComponentLike, getTheme);
 	patchSelectListPrototype(SelectList.prototype, getTheme);
 	patchSettingsListPrototype(SettingsList.prototype, getTheme);
