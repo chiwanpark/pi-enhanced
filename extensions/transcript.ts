@@ -1,10 +1,6 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 
-import {
-	appendAssistantFormatGuidance,
-	looksLikeStructuredAssistantMarkdown,
-	normalizeAssistantMarkdown,
-} from "./internal/assistant-format";
+import { appendAssistantFormatGuidance, normalizeAssistantMarkdown } from "./internal/assistant-format";
 import {
 	ASSISTANT_TRANSCRIPT_PREFIX,
 	ASSISTANT_TRANSCRIPT_PREFIX_PLAIN,
@@ -119,7 +115,7 @@ function decorateUserTranscriptText(text: string): string {
 function decorateAssistantTranscriptText(text: string): string {
 	const stripped = stripAssistantTranscriptDecoration(text);
 	const normalized = normalizeAssistantMarkdown(stripped);
-	if (!normalized.trim() || looksLikeStructuredAssistantMarkdown(normalized)) {
+	if (!normalized.trim()) {
 		return normalized;
 	}
 

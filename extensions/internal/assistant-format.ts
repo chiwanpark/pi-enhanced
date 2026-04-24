@@ -1,6 +1,5 @@
 const FENCE_PATTERN = /^\s*(```|~~~)/;
 const HEADING_PATTERN = /^ {0,3}#{1,6}\s+(.+?)(?:\s+#+\s*)?$/;
-const BOLD_TITLE_PATTERN = /^\*\*[^*\n][\s\S]*[^*\n]\*\*$/;
 
 export const ASSISTANT_FORMAT_GUIDANCE = [
 	"Assistant response formatting rules:",
@@ -52,16 +51,3 @@ export function normalizeAssistantMarkdown(text: string): string {
 	return normalized.join("\n");
 }
 
-export function looksLikeStructuredAssistantMarkdown(text: string): boolean {
-	const firstLine = normalizeAssistantMarkdown(text).trimStart().split("\n")[0]?.trimStart() ?? "";
-	return (
-		firstLine.startsWith("- ") ||
-		firstLine.startsWith("* ") ||
-		firstLine.startsWith("> ") ||
-		firstLine.startsWith("```") ||
-		firstLine.startsWith("~~~") ||
-		firstLine.startsWith("|") ||
-		/^\d+\.\s/.test(firstLine) ||
-		BOLD_TITLE_PATTERN.test(firstLine)
-	);
-}
