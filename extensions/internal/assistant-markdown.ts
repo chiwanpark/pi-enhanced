@@ -125,6 +125,15 @@ function indentAssistantBlock(lines: string[], width: number, prefix: string): s
 	return indentedLines;
 }
 
+function stripContinuationDecoration(text: string, continuation: string): string {
+	const lines = text.split("\n");
+	if (lines.length <= 1 || !lines.slice(1).every((line) => line.startsWith(continuation))) {
+		return text;
+	}
+
+	return lines.map((line, index) => (index === 0 ? line : line.slice(continuation.length))).join("\n");
+}
+
 function renderAssistantBlock(
 	originalRender: (this: MarkdownRuntime, width: number) => string[],
 	markdown: MarkdownRuntime,
@@ -142,7 +151,8 @@ function renderAssistantBlock(
 	}
 
 	const shadowMarkdown = Object.create(markdown) as MarkdownRuntime;
-	shadowMarkdown.text = markdown.text.slice(prefix.length);
+	const continuation = " ".repeat(prefixWidth);
+	shadowMarkdown.text = stripContinuationDecoration(markdown.text.slice(prefix.length), continuation);
 	shadowMarkdown.cachedText = undefined;
 	shadowMarkdown.cachedWidth = undefined;
 	shadowMarkdown.cachedLines = undefined;

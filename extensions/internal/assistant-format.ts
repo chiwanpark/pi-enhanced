@@ -50,4 +50,3 @@ export function normalizeAssistantMarkdown(text: string): string {
 
 	return normalized.join("\n");
 }
-

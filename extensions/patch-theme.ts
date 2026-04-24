@@ -1,7 +1,6 @@
 import { readFileSync } from "node:fs";
 import {
 	AssistantMessageComponent,
-	DynamicBorder,
 	LoginDialogComponent,
 	ToolExecutionComponent,
 	UserMessageComponent,
@@ -77,11 +76,6 @@ type PaddedComponentLike = {
 	render?: unknown;
 	setBgFn?: ((bgFn: (content: string) => string) => void) | undefined;
 	[THINKING_INDENT_PATCH]?: boolean | undefined;
-};
-
-type DynamicBorderLike = {
-	render(width: number): string[];
-	__piEnhancedEditorThemePatched?: boolean | undefined;
 };
 
 type ThemedComponentLike = {
@@ -410,16 +404,6 @@ function patchSettingsListPrototype(prototype: SettingsListLike, getTheme: () =>
 	};
 }
 
-function patchDynamicBorderPrototype(prototype: DynamicBorderLike, getTheme: () => Theme): void {
-	if (markEditorThemePatched(prototype)) {
-		return;
-	}
-
-	prototype.render = function render(width: number): string[] {
-		return [styleBlockLine("", width, loadEditorBgAnsi(getTheme()))];
-	};
-}
-
 function patchEditorThemedComponentPrototype(prototype: ThemedComponentLike, getTheme: () => Theme): void {
 	if (markEditorThemePatched(prototype)) {
 		return;
@@ -459,7 +443,6 @@ export function installThemePatches(source?: ThemeSource): void {
 	patchUserMessagePrototype(UserMessageComponent.prototype as unknown as UserMessageComponentLike, getTheme);
 	patchSelectListPrototype(SelectList.prototype, getTheme);
 	patchSettingsListPrototype(SettingsList.prototype, getTheme);
-	patchDynamicBorderPrototype(DynamicBorder.prototype, getTheme);
 	patchEditorThemedComponentPrototype(ModelSelectorComponent.prototype, getTheme);
 	patchEditorThemedComponentPrototype(OAuthSelectorComponent.prototype, getTheme);
 	patchEditorThemedComponentPrototype(LoginDialogComponent.prototype, getTheme);
