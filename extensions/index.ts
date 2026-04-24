@@ -1,9 +1,11 @@
 import type { ExtensionAPI, ExtensionFactory } from "@mariozechner/pi-coding-agent";
 
+import compactThresholdExtension from "./compact-threshold";
 import editorExtension from "./editor";
 import patchThemeExtension from "./patch-theme";
 import statusCommandExtension from "./status-command";
 import statusbarExtension from "./statusbar";
+import tokenDisciplineExtension from "./token-discipline";
 import transcriptExtension from "./transcript";
 import welcomeExtension from "./welcome";
 
@@ -19,6 +21,8 @@ export default composeExtensions(
 	welcomeExtension,
 	patchThemeExtension,
 	transcriptExtension,
+	tokenDisciplineExtension,
+	compactThresholdExtension,
 	editorExtension,
 	statusbarExtension,
 	statusCommandExtension,

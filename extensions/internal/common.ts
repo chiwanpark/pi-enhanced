@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import os from "node:os";
+import path from "node:path";
 import type { Theme } from "@mariozechner/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
 
@@ -20,6 +21,14 @@ export function withHomeTilde(inputPath: string): string {
 		return `~${inputPath.slice(home.length)}`;
 	}
 	return inputPath;
+}
+
+export function getGlobalPiSettingsPath(): string {
+	return path.join(os.homedir(), ".pi", "agent", "settings.json");
+}
+
+export function getProjectPiSettingsPath(cwd: string): string {
+	return path.join(cwd, ".pi", "settings.json");
 }
 
 export type DrawBoxOptions = {
