@@ -30,7 +30,7 @@ export type DrawBoxOptions = {
 	minContentWidth?: number;
 };
 
-function fitVisible(text: string, width: number): string {
+export function fitVisible(text: string, width: number): string {
 	const truncated = truncateToWidth(text, width);
 	return `${truncated}${" ".repeat(Math.max(0, width - visibleWidth(truncated)))}`;
 }

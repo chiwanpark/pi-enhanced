@@ -17,5 +17,5 @@
     "moduleDetection": "force",
     "skipLibCheck": true
   },
-  "include": []
+  "include": ["extensions/**/*.ts"]
 }

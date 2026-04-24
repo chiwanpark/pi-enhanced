@@ -1,7 +1,10 @@
 import type { ExtensionAPI, ExtensionFactory } from "@mariozechner/pi-coding-agent";
 
+import editorExtension from "./editor";
+import patchThemeExtension from "./patch-theme";
 import statusCommandExtension from "./status-command";
 import statusbarExtension from "./statusbar";
+import transcriptExtension from "./transcript";
 import welcomeExtension from "./welcome";
 
 function composeExtensions(...extensions: ExtensionFactory[]): ExtensionFactory {
@@ -12,4 +15,11 @@ function composeExtensions(...extensions: ExtensionFactory[]): ExtensionFactory 
 	};
 }
 
-export default composeExtensions(welcomeExtension, statusbarExtension, statusCommandExtension);
+export default composeExtensions(
+	welcomeExtension,
+	patchThemeExtension,
+	transcriptExtension,
+	editorExtension,
+	statusbarExtension,
+	statusCommandExtension,
+);
