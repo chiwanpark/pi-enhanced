@@ -25,6 +25,8 @@ Project settings override global settings.
   - `warnLargeReadLines`: Read line count that triggers discipline feedback (default: 400).
   - `warnUnboundedRead`: Warn on reads without `limit` (default: true).
   - `warnBroadBash`: Warn on broad bash scans (`find`, `tree`, recursive `ls`, unscoped `rg`/`grep`) and broad `glob`, `grep`, or `ls` tool calls (default: true).
+- `planMode`: Configures plan mode behavior.
+  - `blockedTools`: An array of tool names to block when Plan Mode is active (default: `["bash", "edit", "write"]`).
 
 ### Example
 
@@ -37,6 +39,9 @@ Project settings override global settings.
       "warnLargeReadLines": 400,
       "warnUnboundedRead": true,
       "warnBroadBash": true
+    },
+    "planMode": {
+      "blockedTools": ["bash", "edit", "write"]
     }
   }
 }

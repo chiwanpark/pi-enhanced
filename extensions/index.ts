@@ -5,6 +5,7 @@ import compactThresholdExtension from "./compact-threshold";
 import editorExtension from "./editor";
 import fileToolsExtension from "./file-tools";
 import patchThemeExtension from "./patch-theme";
+import planModeExtension from "./plan-mode";
 import statusCommandExtension from "./status-command";
 import semanticDisciplineExtension from "./semantic-discipline";
 import statusbarExtension from "./statusbar";
@@ -32,6 +33,7 @@ export default composeExtensions(
 	compactThresholdExtension,
 	editorExtension,
 	fileToolsExtension,
+	planModeExtension,
 	statusbarExtension,
 	statusCommandExtension,
 );
