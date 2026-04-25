@@ -20,11 +20,11 @@ Project settings override global settings.
 ### Items
 
 - `compactThresholdTokens`: The number of tokens to trigger auto-compaction (default: 100000). Other compaction options follow the original pi-mono configuration (`compaction`).
-- `semanticDiscipline`: Warns or blocks broad bash scans and large/unbounded reads to encourage LSP/AST-first code navigation.
+- `semanticDiscipline`: Warns or blocks broad bash/file-tool scans and large/unbounded reads to encourage LSP/AST-first code navigation.
   - `mode`: `"off"`, `"warn"` (default), or `"block"`.
   - `warnLargeReadLines`: Read line count that triggers discipline feedback (default: 400).
   - `warnUnboundedRead`: Warn on reads without `limit` (default: true).
-  - `warnBroadBash`: Warn on broad `find`, `tree`, recursive `ls`, and unscoped `rg`/`grep` (default: true).
+  - `warnBroadBash`: Warn on broad bash scans (`find`, `tree`, recursive `ls`, unscoped `rg`/`grep`) and broad `glob`, `grep`, or `ls` tool calls (default: true).
 
 ### Example
 

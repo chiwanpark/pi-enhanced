@@ -23,7 +23,7 @@ type PiSettingsFile = {
 };
 
 type Finding = {
-	kind: "broad-bash" | "large-read";
+	kind: "broad-bash" | "broad-tool" | "large-read";
 	message: string;
 	reason: string;
 };
@@ -184,6 +184,56 @@ function inspectRead(path: string, limit: number | undefined, config: SemanticDi
 	return null;
 }
 
+function isDefaultPath(path: string | undefined): boolean {
+	const normalized = path?.trim();
+	return !normalized || normalized === "." || normalized === "./" || normalized === "$PWD" || normalized === "@.";
+}
+
+function isBroadGlobPattern(pattern: string): boolean {
+	const normalized = pattern.trim();
+	return (
+		normalized === "*" ||
+		normalized === "**" ||
+		normalized === "**/*" ||
+		normalized === "./**" ||
+		normalized === "./**/*"
+	);
+}
+
+function inspectGlobTool(pattern: string, path: string | undefined): Finding | null {
+	if (!isDefaultPath(path) || !isBroadGlobPattern(pattern)) return null;
+	return {
+		kind: "broad-tool",
+		message: "Broad glob scan detected. Prefer code_overview for initial repository mapping or narrow the glob/path.",
+		reason: "Use code_overview before broad glob scans, or scope glob with path/pattern.",
+	};
+}
+
+function inspectGrepTool(path: string | undefined, glob: string | undefined): Finding | null {
+	if (!isDefaultPath(path) || typeof glob === "string") return null;
+	return {
+		kind: "broad-tool",
+		message: "Broad grep detected. For code symbols, prefer LSP/AST tools; otherwise scope grep with a path or glob.",
+		reason: "Use semantic tools for code symbols, or scope grep with path/glob.",
+	};
+}
+
+function inspectLsTool(path: string | undefined, recursive: boolean): Finding | null {
+	if (!recursive && !isDefaultPath(path)) return null;
+	if (!recursive && isDefaultPath(path)) {
+		return {
+			kind: "broad-tool",
+			message: "Top-level workspace ls detected. Prefer code_overview for initial repository mapping.",
+			reason: "Use code_overview before broad workspace listing.",
+		};
+	}
+	return {
+		kind: "broad-tool",
+		message: "Recursive ls detected. Prefer code_overview for repository mapping or scope ls to a smaller path.",
+		reason: "Use code_overview before recursive ls scans, or scope ls to a smaller path.",
+	};
+}
+
 function fingerprint(toolName: string, finding: Finding, detail: string): string {
 	return `${toolName}:${finding.kind}:${finding.reason}:${detail.slice(0, 160)}`;
 }
@@ -220,6 +270,30 @@ export default function semanticDisciplineExtension(pi: ExtensionAPI) {
 			const limit = typeof event.input.limit === "number" ? event.input.limit : undefined;
 			detail = `${path}:${limit ?? "unbounded"}`;
 			finding = inspectRead(path, limit, config);
+		}
+
+		if (event.toolName === "glob" && config.warnBroadBash) {
+			const input = event.input as Record<string, unknown>;
+			const pattern = typeof input.pattern === "string" ? input.pattern : "";
+			const path = typeof input.path === "string" ? input.path : undefined;
+			detail = `${path ?? "."}:${pattern}`;
+			finding = inspectGlobTool(pattern, path);
+		}
+
+		if (event.toolName === "grep" && config.warnBroadBash) {
+			const input = event.input as Record<string, unknown>;
+			const path = typeof input.path === "string" ? input.path : undefined;
+			const glob = typeof input.glob === "string" ? input.glob : undefined;
+			detail = `${path ?? "."}:${glob ?? "<no-glob>"}`;
+			finding = inspectGrepTool(path, glob);
+		}
+
+		if (event.toolName === "ls" && config.warnBroadBash) {
+			const input = event.input as Record<string, unknown>;
+			const path = typeof input.path === "string" ? input.path : undefined;
+			const recursive = input.recursive === true;
+			detail = `${path ?? "."}:${recursive ? "recursive" : "flat"}`;
+			finding = inspectLsTool(path, recursive);
 		}
 
 		if (!finding) return undefined;

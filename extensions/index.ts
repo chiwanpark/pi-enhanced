@@ -3,6 +3,7 @@ import type { ExtensionAPI, ExtensionFactory } from "@mariozechner/pi-coding-age
 import askUserExtension from "./ask-user";
 import compactThresholdExtension from "./compact-threshold";
 import editorExtension from "./editor";
+import fileToolsExtension from "./file-tools";
 import patchThemeExtension from "./patch-theme";
 import statusCommandExtension from "./status-command";
 import semanticDisciplineExtension from "./semantic-discipline";
@@ -30,6 +31,7 @@ export default composeExtensions(
 	askUserExtension,
 	compactThresholdExtension,
 	editorExtension,
+	fileToolsExtension,
 	statusbarExtension,
 	statusCommandExtension,
 );
