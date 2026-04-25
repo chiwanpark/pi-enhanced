@@ -1,12 +1,14 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 
 export const TOKEN_DISCIPLINE_GUIDANCE = [
-	"Token discipline rules:",
-	"- Prefer ast_search and lsp_definition before broad read or bash scans.",
-	"- Use read with offset and limit for large files, then continue in chunks only as needed.",
-	"- Keep bash/search scoped to specific paths and patterns; avoid broad scans across installed dependencies, docs, or home directories unless the task truly requires them.",
-	"- Reuse earlier findings when possible instead of repeating large reads or searches.",
-	"- When output may be large, get a narrow slice first and expand only if it is still necessary.",
+	"Token and context discipline rules:",
+	"- Start with the narrowest tool that can answer the question; avoid broad scans unless required.",
+	"- Reuse earlier findings instead of repeating large reads or searches.",
+	"- When output may be large, request a narrow slice first and expand only if necessary.",
+	"- Keep bash/search scoped to specific paths and patterns; avoid installed/generated directories, docs, or home directories unless the task requires them.",
+	"- Do not read entire large files. Prefer symbols, diagnostics, definitions, references, hovers, or small offset+limit slices.",
+	"- For codebase exploration, follow: code_overview -> lsp_symbols/ast_search -> lsp_definition/lsp_references -> targeted read slices.",
+	"- Use textual search for literal strings, configs, docs, routes, CSS classes, test titles, or after semantic tools fail—not as the default for code symbols.",
 	"- After docs-heavy or repo-archeology work, prefer a fresh session before implementation work.",
 ].join("\n");
 

@@ -4,6 +4,7 @@ import compactThresholdExtension from "./compact-threshold";
 import editorExtension from "./editor";
 import patchThemeExtension from "./patch-theme";
 import statusCommandExtension from "./status-command";
+import semanticDisciplineExtension from "./semantic-discipline";
 import statusbarExtension from "./statusbar";
 import tokenDisciplineExtension from "./token-discipline";
 import transcriptExtension from "./transcript";
@@ -22,6 +23,7 @@ export default composeExtensions(
 	patchThemeExtension,
 	transcriptExtension,
 	tokenDisciplineExtension,
+	semanticDisciplineExtension,
 	compactThresholdExtension,
 	editorExtension,
 	statusbarExtension,
