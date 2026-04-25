@@ -6,6 +6,7 @@ import patchThemeExtension from "./patch-theme";
 import statusCommandExtension from "./status-command";
 import semanticDisciplineExtension from "./semantic-discipline";
 import statusbarExtension from "./statusbar";
+import todoExtension from "./todo";
 import tokenDisciplineExtension from "./token-discipline";
 import transcriptExtension from "./transcript";
 import welcomeExtension from "./welcome";
@@ -24,6 +25,7 @@ export default composeExtensions(
 	transcriptExtension,
 	tokenDisciplineExtension,
 	semanticDisciplineExtension,
+	todoExtension,
 	compactThresholdExtension,
 	editorExtension,
 	statusbarExtension,
