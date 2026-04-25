@@ -1,5 +1,6 @@
 import type { ExtensionAPI, ExtensionFactory } from "@mariozechner/pi-coding-agent";
 
+import askUserExtension from "./ask-user";
 import compactThresholdExtension from "./compact-threshold";
 import editorExtension from "./editor";
 import patchThemeExtension from "./patch-theme";
@@ -26,6 +27,7 @@ export default composeExtensions(
 	tokenDisciplineExtension,
 	semanticDisciplineExtension,
 	todoExtension,
+	askUserExtension,
 	compactThresholdExtension,
 	editorExtension,
 	statusbarExtension,
