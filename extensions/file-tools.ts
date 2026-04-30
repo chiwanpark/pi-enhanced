@@ -65,7 +65,12 @@ const LsParams = Type.Object({
 type GlobInput = Static<typeof GlobParams>;
 type GrepInput = Static<typeof GrepParams>;
 type LsInput = Static<typeof LsParams>;
-type Entry = { path: string; type: "file" | "directory" | "symlink" | "other" };
+type Entry = {
+	path: string;
+	absolutePath: string;
+	type: "file" | "directory" | "symlink" | "other";
+	targetType?: "file" | "directory" | "other";
+};
 type Match = { path: string; line: number; text: string };
 
 function clamp(value: number | undefined, fallback: number, min: number, max: number): number {
@@ -84,22 +89,14 @@ function isInside(root: string, target: string): boolean {
 }
 
 async function safeResolve(ctx: ExtensionContext, input: string | undefined): Promise<string> {
-	const root = await realpath(ctx.cwd);
+	const root = resolve(ctx.cwd);
 	const candidate = resolve(root, normalizePath(input));
 	if (!isInside(root, candidate)) throw new Error(`Path escapes the workspace: ${input ?? "."}`);
-
-	try {
-		const canonical = await realpath(candidate);
-		if (!isInside(root, canonical)) throw new Error(`Path escapes the workspace via symlink: ${input ?? "."}`);
-		return canonical;
-	} catch (error) {
-		if (error instanceof Error && error.message.includes("escapes the workspace")) throw error;
-		return candidate;
-	}
+	return candidate;
 }
 
 function toRelative(ctx: ExtensionContext, absolutePath: string): string {
-	const rel = relative(ctx.cwd, absolutePath).split(sep).join("/");
+	const rel = relative(resolve(ctx.cwd), absolutePath).split(sep).join("/");
 	return rel === "" ? "." : rel;
 }
 
@@ -119,6 +116,30 @@ function entryType(dirent: { isDirectory(): boolean; isFile(): boolean; isSymbol
 	return "other";
 }
 
+async function targetType(path: string): Promise<Entry["targetType"]> {
+	try {
+		const stats = await stat(path);
+		if (stats.isDirectory()) return "directory";
+		if (stats.isFile()) return "file";
+		return "other";
+	} catch {
+		return undefined;
+	}
+}
+
+function isFileEntry(entry: Entry): boolean {
+	return entry.type === "file" || (entry.type === "symlink" && entry.targetType === "file");
+}
+
+function isDirectoryEntry(entry: Entry): boolean {
+	return entry.type === "directory" || (entry.type === "symlink" && entry.targetType === "directory");
+}
+
+function matchesEntryPattern(entry: Entry, root: string, pattern: string): boolean {
+	const rootRelative = relative(root, entry.absolutePath).split(sep).join("/") || entry.path;
+	return matchesGlob(entry.path, pattern) || matchesGlob(rootRelative, pattern);
+}
+
 async function walkFiles(
 	ctx: ExtensionContext,
 	root: string,
@@ -128,14 +149,30 @@ async function walkFiles(
 		signal?: AbortSignal | undefined;
 		includeDirectories?: boolean;
 		depth?: number;
+		onEntry?: (entry: Entry) => boolean;
 	},
 ): Promise<Entry[]> {
 	const entries: Entry[] = [];
 	const maxDepth = options.depth ?? Number.POSITIVE_INFINITY;
+	const visitedDirectories = new Set<string>();
+
+	function addEntry(entry: Entry): boolean {
+		if (options.onEntry && !options.onEntry(entry)) return entries.length >= options.maxEntries;
+		entries.push(entry);
+		return entries.length >= options.maxEntries;
+	}
 
 	async function visit(directory: string, depth: number): Promise<void> {
 		options.signal?.throwIfAborted();
 		if (entries.length >= options.maxEntries) return;
+
+		try {
+			const canonicalDirectory = await realpath(directory);
+			if (visitedDirectories.has(canonicalDirectory)) return;
+			visitedDirectories.add(canonicalDirectory);
+		} catch {
+			// Let opendir surface the concrete filesystem error below.
+		}
 
 		const dir = await opendir(directory);
 		for await (const dirent of dir) {
@@ -145,12 +182,19 @@ async function walkFiles(
 			if (shouldIgnore(relPath, options.includeHidden)) continue;
 
 			const type = entryType(dirent);
-			if (type !== "directory" || options.includeDirectories) {
-				entries.push({ path: relPath, type });
-				if (entries.length >= options.maxEntries) return;
+			const resolvedTargetType = type === "symlink" ? await targetType(absolutePath) : undefined;
+			const entry: Entry = {
+				path: relPath,
+				absolutePath,
+				type,
+				...(resolvedTargetType ? { targetType: resolvedTargetType } : {}),
+			};
+
+			if (!isDirectoryEntry(entry) || options.includeDirectories) {
+				if (addEntry(entry)) return;
 			}
 
-			if (type === "directory" && depth < maxDepth) {
+			if (isDirectoryEntry(entry) && depth < maxDepth) {
 				await visit(absolutePath, depth + 1);
 				if (entries.length >= options.maxEntries) return;
 			}
@@ -158,8 +202,13 @@ async function walkFiles(
 	}
 
 	const rootStat = await stat(root);
-	if (rootStat.isFile()) return [{ path: toRelative(ctx, root), type: "file" }];
-	if (!rootStat.isDirectory()) return [{ path: toRelative(ctx, root), type: "other" }];
+	const rootEntry: Entry = {
+		path: toRelative(ctx, root),
+		absolutePath: root,
+		type: rootStat.isFile() ? "file" : rootStat.isDirectory() ? "directory" : "other",
+	};
+	if (rootStat.isFile()) return !options.onEntry || options.onEntry(rootEntry) ? [rootEntry] : [];
+	if (!rootStat.isDirectory()) return !options.onEntry || options.onEntry(rootEntry) ? [rootEntry] : [];
 
 	await visit(root, 0);
 	return entries;
@@ -222,12 +271,12 @@ export default function fileToolsExtension(pi: ExtensionAPI) {
 		async execute(_toolCallId, params: GlobInput, signal, _onUpdate, ctx) {
 			const root = await safeResolve(ctx, params.path);
 			const maxResults = clamp(params.maxResults, DEFAULT_MAX_RESULTS, 1, MAX_RESULTS_CAP);
-			const entries = await walkFiles(ctx, root, {
+			const matches = await walkFiles(ctx, root, {
 				includeHidden: params.includeHidden === true,
 				maxEntries: maxResults + 1,
 				signal,
+				onEntry: (entry) => isFileEntry(entry) && matchesEntryPattern(entry, root, params.pattern),
 			});
-			const matches = entries.filter((entry) => entry.type === "file" && matchesGlob(entry.path, params.pattern));
 			const limited = matches.slice(0, maxResults);
 			return {
 				content: [{ type: "text" as const, text: formatEntries(limited, matches.length > maxResults) }],
@@ -262,10 +311,10 @@ export default function fileToolsExtension(pi: ExtensionAPI) {
 
 			for (const entry of entries) {
 				signal?.throwIfAborted();
-				if (entry.type !== "file") continue;
-				if (params.glob && !matchesGlob(entry.path, params.glob)) continue;
+				if (!isFileEntry(entry)) continue;
+				if (params.glob && !matchesEntryPattern(entry, root, params.glob)) continue;
 				try {
-					const { text } = await readTextFile(resolve(ctx.cwd, entry.path), DEFAULT_PER_FILE_BYTES);
+					const { text } = await readTextFile(entry.absolutePath, DEFAULT_PER_FILE_BYTES);
 					const lines = text.split(/\r?\n/);
 					for (let index = 0; index < lines.length; index += 1) {
 						const line = lines[index] ?? "";
