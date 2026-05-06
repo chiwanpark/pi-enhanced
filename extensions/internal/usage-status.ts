@@ -374,12 +374,11 @@ export async function fetchClaudeUsage(auth: AuthData): Promise<UsageInfo> {
 		typeof extraUsage.used_credits === "number"
 	) {
 		const currency = typeof extraUsage.currency === "string" ? extraUsage.currency : "USD";
-		const utilization =
-			typeof extraUsage.utilization === "number" && Number.isFinite(extraUsage.utilization)
-				? extraUsage.utilization
-				: extraUsage.monthly_limit > 0
-					? extraUsage.used_credits / extraUsage.monthly_limit
-					: null;
+		// Compute the utilization ratio ourselves from the dollar-denominated fields.
+		// The API's `extra_usage.utilization` value is unreliable for this view (it has shown
+		// up as a percent-scaled number, e.g. 0.724 meaning 0.724%, which `readPercent` would
+		// then misinterpret as the fraction 72.4%).
+		const utilization = extraUsage.monthly_limit > 0 ? extraUsage.used_credits / extraUsage.monthly_limit : null;
 		const used = formatAnthropicCurrency(extraUsage.used_credits, currency);
 		const limit = formatAnthropicCurrency(extraUsage.monthly_limit, currency);
 		const compactUsed = formatAnthropicCurrencyCompact(extraUsage.used_credits, currency);
