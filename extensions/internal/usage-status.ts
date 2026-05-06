@@ -378,7 +378,7 @@ export async function fetchClaudeUsage(auth: AuthData): Promise<UsageInfo> {
 			typeof extraUsage.utilization === "number" && Number.isFinite(extraUsage.utilization)
 				? extraUsage.utilization
 				: extraUsage.monthly_limit > 0
-					? (extraUsage.used_credits / extraUsage.monthly_limit) * 100
+					? extraUsage.used_credits / extraUsage.monthly_limit
 					: null;
 		const used = formatAnthropicCurrency(extraUsage.used_credits, currency);
 		const limit = formatAnthropicCurrency(extraUsage.monthly_limit, currency);
