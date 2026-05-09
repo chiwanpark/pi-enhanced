@@ -1,5 +1,5 @@
-import type { ExtensionAPI, Theme } from "@mariozechner/pi-coding-agent";
-import { visibleWidth } from "@mariozechner/pi-tui";
+import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
+import { visibleWidth } from "@earendil-works/pi-tui";
 import { drawBox, getPackageVersion } from "./internal/common";
 
 const THEME_VERSION = getPackageVersion();

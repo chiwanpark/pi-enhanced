@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { getOAuthApiKey } from "@mariozechner/pi-ai/oauth";
+import { getOAuthApiKey } from "@earendil-works/pi-ai/oauth";
 
 export type SupportedProvider = "openai-codex" | "anthropic" | "google-gemini-cli" | "github-copilot";
 

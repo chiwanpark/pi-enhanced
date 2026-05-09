@@ -1,4 +1,4 @@
-import { Markdown, visibleWidth } from "@mariozechner/pi-tui";
+import { Markdown, visibleWidth } from "@earendil-works/pi-tui";
 
 export const ASSISTANT_TRANSCRIPT_PREFIX_PLAIN = "• ";
 export const LEGACY_ASSISTANT_TRANSCRIPT_PREFIX_PLAIN = "· ";

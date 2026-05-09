@@ -1,4 +1,4 @@
-import type { ExtensionAPI, ExtensionFactory } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI, ExtensionFactory } from "@earendil-works/pi-coding-agent";
 
 import askUserExtension from "./ask-user";
 import compactThresholdExtension from "./compact-threshold";

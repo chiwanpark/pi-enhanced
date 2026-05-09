@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import { appendAssistantFormatGuidance, normalizeAssistantMarkdown } from "./internal/assistant-format";
 import {

@@ -8,8 +8,8 @@ import {
 	OAuthSelectorComponent,
 	type ExtensionAPI,
 	type Theme,
-} from "@mariozechner/pi-coding-agent";
-import { Loader, SelectList, SettingsList } from "@mariozechner/pi-tui";
+} from "@earendil-works/pi-coding-agent";
+import { Loader, SelectList, SettingsList } from "@earendil-works/pi-tui";
 import { installAssistantMarkdownPatch } from "./internal/assistant-markdown";
 import { installAssistantMessageFormatPatch } from "./internal/assistant-message-format";
 import { installAssistantMessageGapPatch } from "./internal/assistant-message-gap";

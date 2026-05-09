@@ -1,5 +1,5 @@
-import type { ExtensionAPI, Theme } from "@mariozechner/pi-coding-agent";
-import { truncateToWidth } from "@mariozechner/pi-tui";
+import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
+import { truncateToWidth } from "@earendil-works/pi-tui";
 import { withHomeTilde } from "./internal/common";
 import {
 	loadUsage,

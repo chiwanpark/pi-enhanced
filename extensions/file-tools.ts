@@ -1,6 +1,6 @@
-import { Type, type Static } from "@mariozechner/pi-ai";
-import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
-import { Text } from "@mariozechner/pi-tui";
+import { Type, type Static } from "@earendil-works/pi-ai";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { Text } from "@earendil-works/pi-tui";
 import { opendir, readFile, realpath, stat } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep, matchesGlob } from "node:path";
 

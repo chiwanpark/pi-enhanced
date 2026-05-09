@@ -1,6 +1,6 @@
-import { StringEnum, Type, type Static } from "@mariozechner/pi-ai";
-import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
-import { Text, truncateToWidth } from "@mariozechner/pi-tui";
+import { StringEnum, Type, type Static } from "@earendil-works/pi-ai";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { Text, truncateToWidth } from "@earendil-works/pi-tui";
 
 const TODO_WIDGET_ID = "pi-enhanced-todos";
 const TODO_TOOL_NAME = "write_todos";

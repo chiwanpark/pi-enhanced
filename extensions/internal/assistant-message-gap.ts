@@ -1,4 +1,4 @@
-import { AssistantMessageComponent } from "@mariozechner/pi-coding-agent";
+import { AssistantMessageComponent } from "@earendil-works/pi-coding-agent";
 
 import type { AssistantContentBlock, AssistantMessageLike, AssistantUpdateRuntime } from "./assistant-message-types";
 

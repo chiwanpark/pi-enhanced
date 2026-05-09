@@ -1,5 +1,5 @@
-import { CustomEditor, type ExtensionAPI, type KeybindingsManager, type Theme } from "@mariozechner/pi-coding-agent";
-import { visibleWidth, type EditorTheme, type TUI } from "@mariozechner/pi-tui";
+import { CustomEditor, type ExtensionAPI, type KeybindingsManager, type Theme } from "@earendil-works/pi-coding-agent";
+import { visibleWidth, type EditorTheme, type TUI } from "@earendil-works/pi-tui";
 import { installThemePatches, loadEditorBgAnsi, styleBlockLine } from "./patch-theme";
 
 const CARET = "❯ ";
