@@ -1,24 +1,12 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import { appendAssistantFormatGuidance, normalizeAssistantMarkdown } from "./internal/assistant-format";
-import {
-	ASSISTANT_TRANSCRIPT_PREFIX,
-	ASSISTANT_TRANSCRIPT_PREFIX_PLAIN,
-	LEGACY_ASSISTANT_TRANSCRIPT_PREFIX,
-	LEGACY_ASSISTANT_TRANSCRIPT_PREFIX_PLAIN,
-} from "./internal/assistant-markdown";
 
 const TRANSCRIPT_PREFIX = "• ";
 const TRANSCRIPT_CONTINUATION = "  ";
 const FENCE_PATTERN = /^\s*(```|~~~)/;
 const HEADING_PATTERN = /^ {0,3}#{1,6}\s+/;
 const BOLD_TITLE_PATTERN = /^\*\*[^*\n][\s\S]*[^*\n]\*\*$/;
-const ASSISTANT_PREFIXES = [
-	ASSISTANT_TRANSCRIPT_PREFIX,
-	LEGACY_ASSISTANT_TRANSCRIPT_PREFIX,
-	ASSISTANT_TRANSCRIPT_PREFIX_PLAIN,
-	LEGACY_ASSISTANT_TRANSCRIPT_PREFIX_PLAIN,
-] as const;
 
 type TextBlock = {
 	type: "text";
@@ -75,25 +63,7 @@ function stripUserTranscriptDecoration(text: string): string {
 }
 
 function stripAssistantTranscriptDecoration(text: string): string {
-	let stripped = stripUserTranscriptDecoration(text);
-	for (const prefix of ASSISTANT_PREFIXES) {
-		if (stripped.startsWith(prefix)) {
-			stripped = stripped.slice(prefix.length);
-			break;
-		}
-	}
-
-	return stripped
-		.split("\n")
-		.map((line) => {
-			for (const prefix of ASSISTANT_PREFIXES) {
-				if (line.startsWith(prefix)) {
-					return line.slice(prefix.length);
-				}
-			}
-			return line;
-		})
-		.join("\n");
+	return stripUserTranscriptDecoration(text);
 }
 
 function stripMessageTextDecoration(role: string, text: string): string {
@@ -114,12 +84,7 @@ function decorateUserTranscriptText(text: string): string {
 
 function decorateAssistantTranscriptText(text: string): string {
 	const stripped = stripAssistantTranscriptDecoration(text);
-	const normalized = normalizeAssistantMarkdown(stripped);
-	if (!normalized.trim()) {
-		return normalized;
-	}
-
-	return `${ASSISTANT_TRANSCRIPT_PREFIX}${normalized}`;
+	return normalizeAssistantMarkdown(stripped);
 }
 
 function isTextBlock(value: unknown): value is TextBlock {

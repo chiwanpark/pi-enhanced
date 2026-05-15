@@ -9,7 +9,7 @@ import {
 	type ExtensionAPI,
 	type Theme,
 } from "@earendil-works/pi-coding-agent";
-import { Loader, SelectList, SettingsList } from "@earendil-works/pi-tui";
+import { Box, Loader, SelectList, SettingsList, Text } from "@earendil-works/pi-tui";
 import { installAssistantMarkdownPatch } from "./internal/assistant-markdown";
 import { installAssistantMessageFormatPatch } from "./internal/assistant-message-format";
 import { installAssistantMessageGapPatch } from "./internal/assistant-message-gap";
@@ -17,8 +17,6 @@ import { fitVisible } from "./internal/common";
 
 const ANSI_RESET = "\x1b[0m";
 const CARET = "❯ ";
-const THINKING_INDENT = "  ";
-const THINKING_INDENT_PATCH = Symbol.for("pi-enhanced.thinking-indent-patch");
 const TOOL_OUTPUT_PADDING_X = 2;
 
 type ThemeColorValue = string | number;
@@ -75,7 +73,7 @@ type PaddedComponentLike = {
 	invalidate?: unknown;
 	render?: unknown;
 	setBgFn?: ((bgFn: (content: string) => string) => void) | undefined;
-	[THINKING_INDENT_PATCH]?: boolean | undefined;
+
 };
 
 type ThemedComponentLike = {
@@ -167,6 +165,26 @@ function markToolOutputPaddingPatched(prototype: {
 
 	prototype.__piEnhancedToolOutputPaddingPatched = true;
 	return false;
+}
+
+const PADDING_PATCH_SYMBOL = Symbol.for("pi-enhanced.tool-padding-patched");
+
+function patchPaddedPrototype(prototype: unknown): void {
+	const p = prototype as Record<string | symbol, unknown>;
+	if (p[PADDING_PATCH_SYMBOL]) {
+		return;
+	}
+
+	const originalRender = p.render as ((this: Record<string, unknown>, width: number) => string[]) | undefined;
+	if (!originalRender) return;
+
+	p.render = function render(this: Record<string, unknown>, width: number): string[] {
+		if (this.paddingX === 1) {
+			this.paddingX = TOOL_OUTPUT_PADDING_X;
+		}
+		return originalRender.call(this, width);
+	};
+	p[PADDING_PATCH_SYMBOL] = true;
 }
 
 function resolveThemeVar(
@@ -272,30 +290,7 @@ function setHorizontalPadding(component: unknown, paddingX: number): void {
 }
 
 function removeHorizontalPadding(component: unknown): void {
-	setHorizontalPadding(component, 0);
-}
-
-function applyThinkingIndent(component: unknown): void {
-	setHorizontalPadding(component, 0);
-	if (!component || typeof component !== "object") {
-		return;
-	}
-
-	const renderable = component as PaddedComponentLike;
-	if (renderable[THINKING_INDENT_PATCH] || typeof renderable.render !== "function") {
-		return;
-	}
-
-	const originalRender = renderable.render as RenderMethod<PaddedComponentLike>;
-	renderable.render = function render(this: PaddedComponentLike, width: number): string[] {
-		const innerWidth = Math.max(1, width - THINKING_INDENT.length);
-		return originalRender.call(this, innerWidth).map((line) => fitVisible(`${THINKING_INDENT}${line}`, width));
-	};
-	renderable[THINKING_INDENT_PATCH] = true;
-
-	if (typeof renderable.invalidate === "function") {
-		renderable.invalidate();
-	}
+	setHorizontalPadding(component, 2);
 }
 
 function isVisibleAssistantContentBlock(block: AssistantMessageLike["content"][number]): boolean {
@@ -315,11 +310,7 @@ function applyAssistantContentPadding(component: AssistantMessageComponentLike, 
 		}
 
 		const block = visibleBlocks[blockIndex];
-		if (block?.type === "thinking") {
-			applyThinkingIndent(child);
-		} else {
-			removeHorizontalPadding(child);
-		}
+		removeHorizontalPadding(child);
 		blockIndex++;
 	}
 }
@@ -438,6 +429,8 @@ export function installThemePatches(source?: ThemeSource): void {
 	installAssistantMessageGapPatch();
 
 	patchLoaderPrototype(Loader.prototype);
+	patchPaddedPrototype(Box.prototype);
+	patchPaddedPrototype(Text.prototype);
 	patchAssistantMessagePrototype(AssistantMessageComponent.prototype as unknown as AssistantMessageComponentLike);
 	patchToolExecutionPrototype(ToolExecutionComponent.prototype as unknown as ToolExecutionComponentLike);
 	patchUserMessagePrototype(UserMessageComponent.prototype as unknown as UserMessageComponentLike, getTheme);
