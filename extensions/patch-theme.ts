@@ -58,6 +58,7 @@ type AssistantMessageComponentLike = {
 type UserMessageComponentLike = {
 	render(width: number): string[];
 	contentBox?: unknown;
+	children?: unknown[] | undefined;
 	__piEnhancedUserIndentPatched?: boolean | undefined;
 };
 
@@ -73,7 +74,6 @@ type PaddedComponentLike = {
 	invalidate?: unknown;
 	render?: unknown;
 	setBgFn?: ((bgFn: (content: string) => string) => void) | undefined;
-
 };
 
 type ThemedComponentLike = {
@@ -293,25 +293,13 @@ function removeHorizontalPadding(component: unknown): void {
 	setHorizontalPadding(component, 2);
 }
 
-function isVisibleAssistantContentBlock(block: AssistantMessageLike["content"][number]): boolean {
-	return (
-		(block.type === "text" && Boolean(block.text?.trim())) ||
-		(block.type === "thinking" && Boolean(block.thinking?.trim()))
-	);
-}
-
-function applyAssistantContentPadding(component: AssistantMessageComponentLike, message: AssistantMessageLike): void {
-	const visibleBlocks = message.content.filter(isVisibleAssistantContentBlock);
-	let blockIndex = 0;
-
+function applyAssistantContentPadding(component: AssistantMessageComponentLike): void {
 	for (const child of component.contentContainer?.children ?? []) {
 		if (!child || typeof child !== "object" || typeof (child as PaddedComponentLike).paddingX !== "number") {
 			continue;
 		}
 
-		const block = visibleBlocks[blockIndex];
 		removeHorizontalPadding(child);
-		blockIndex++;
 	}
 }
 
@@ -323,7 +311,7 @@ function patchAssistantMessagePrototype(prototype: AssistantMessageComponentLike
 	const originalUpdateContent = prototype.updateContent;
 	prototype.updateContent = function updateContent(message: AssistantMessageLike): void {
 		originalUpdateContent.call(this, message);
-		applyAssistantContentPadding(this, message);
+		applyAssistantContentPadding(this);
 	};
 }
 
@@ -353,6 +341,16 @@ function patchToolExecutionPrototype(prototype: ToolExecutionComponentLike): voi
 	};
 }
 
+function findUserContentBox(component: UserMessageComponentLike): unknown {
+	if (component.contentBox) {
+		return component.contentBox;
+	}
+
+	return component.children?.find(
+		(child) => child && typeof child === "object" && typeof (child as PaddedComponentLike).setBgFn === "function",
+	);
+}
+
 function patchUserMessagePrototype(prototype: UserMessageComponentLike, getTheme: () => Theme): void {
 	if (markUserIndentPatched(prototype)) {
 		return;
@@ -360,8 +358,9 @@ function patchUserMessagePrototype(prototype: UserMessageComponentLike, getTheme
 
 	const originalRender = prototype.render as RenderMethod<UserMessageComponentLike>;
 	prototype.render = function render(width: number): string[] {
-		removeHorizontalPadding(this.contentBox);
-		applyEditorBackground(this.contentBox, loadEditorBgAnsi(getTheme()));
+		const contentBox = findUserContentBox(this);
+		removeHorizontalPadding(contentBox);
+		applyEditorBackground(contentBox, loadEditorBgAnsi(getTheme()));
 		return originalRender.call(this, width);
 	};
 }
@@ -443,7 +442,7 @@ export function installThemePatches(source?: ThemeSource): void {
 
 export default function patchThemeExtension(pi: ExtensionAPI) {
 	pi.on("session_start", async (_event, ctx) => {
-		if (!ctx.hasUI) {
+		if (ctx.mode !== "tui") {
 			return;
 		}
 

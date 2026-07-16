@@ -61,7 +61,7 @@ class StyledEditor extends CustomEditor {
 
 export default function editorExtension(pi: ExtensionAPI) {
 	pi.on("session_start", async (_event, ctx) => {
-		if (!ctx.hasUI) {
+		if (ctx.mode !== "tui") {
 			return;
 		}
 

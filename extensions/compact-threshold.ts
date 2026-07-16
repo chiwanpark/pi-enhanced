@@ -189,7 +189,7 @@ export default function compactThresholdExtension(pi: ExtensionAPI) {
 		previousTokens = previousThresholdTokens;
 	});
 
-	pi.on("agent_end", async (_event, ctx) => {
+	pi.on("agent_settled", async (_event, ctx) => {
 		if (compactionInFlight || pendingCompaction === null) return;
 
 		const { currentTokens } = pendingCompaction;

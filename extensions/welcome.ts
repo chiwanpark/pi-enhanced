@@ -12,7 +12,7 @@ function basename(path: string): string {
 
 export default function welcomeExtension(pi: ExtensionAPI) {
 	pi.on("session_start", async (_event, ctx) => {
-		if (!ctx.hasUI) {
+		if (ctx.mode !== "tui") {
 			return;
 		}
 

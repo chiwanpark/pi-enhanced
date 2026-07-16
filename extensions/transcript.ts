@@ -5,8 +5,6 @@ import { appendAssistantFormatGuidance, normalizeAssistantMarkdown } from "./int
 const TRANSCRIPT_PREFIX = "• ";
 const TRANSCRIPT_CONTINUATION = "  ";
 const FENCE_PATTERN = /^\s*(```|~~~)/;
-const HEADING_PATTERN = /^ {0,3}#{1,6}\s+/;
-const BOLD_TITLE_PATTERN = /^\*\*[^*\n][\s\S]*[^*\n]\*\*$/;
 
 type TextBlock = {
 	type: "text";
@@ -20,31 +18,6 @@ type MessageLike = {
 
 function normalizeNewlines(text: string): string {
 	return text.replace(/\r\n?/g, "\n");
-}
-
-function firstVisibleLine(text: string): string {
-	const normalized = normalizeNewlines(text);
-	for (const line of normalized.split("\n")) {
-		const trimmed = line.trimStart();
-		if (trimmed.length > 0) {
-			return trimmed;
-		}
-	}
-	return "";
-}
-
-function looksLikeStructuredMarkdown(text: string): boolean {
-	const firstLine = firstVisibleLine(text);
-	return (
-		FENCE_PATTERN.test(firstLine) ||
-		HEADING_PATTERN.test(firstLine) ||
-		firstLine.startsWith("- ") ||
-		firstLine.startsWith("* ") ||
-		firstLine.startsWith("> ") ||
-		firstLine.startsWith("|") ||
-		/^\d+\.\s/.test(firstLine) ||
-		BOLD_TITLE_PATTERN.test(firstLine)
-	);
 }
 
 function stripUserTranscriptDecoration(text: string): string {
@@ -71,15 +44,27 @@ function stripMessageTextDecoration(role: string, text: string): string {
 }
 
 function decorateUserTranscriptText(text: string): string {
-	const stripped = stripUserTranscriptDecoration(text);
-	if (!stripped.trim() || looksLikeStructuredMarkdown(stripped)) {
-		return stripped;
+	const normalized = normalizeNewlines(text);
+	const lines = normalized.split("\n");
+	const result: string[] = [];
+	let inFence = false;
+
+	for (const line of lines) {
+		if (FENCE_PATTERN.test(line)) {
+			inFence = !inFence;
+			result.push(line);
+			continue;
+		}
+
+		if (inFence) {
+			// Strip all leading whitespace from code block content
+			result.push(line.trimStart());
+		} else {
+			result.push(line);
+		}
 	}
 
-	return normalizeNewlines(stripped)
-		.split("\n")
-		.map((line, index) => `${index === 0 ? TRANSCRIPT_PREFIX : TRANSCRIPT_CONTINUATION}${line}`)
-		.join("\n");
+	return result.join("\n");
 }
 
 function decorateAssistantTranscriptText(text: string): string {

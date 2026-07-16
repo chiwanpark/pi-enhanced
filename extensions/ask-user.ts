@@ -60,6 +60,7 @@ export default function askUserExtension(pi: ExtensionAPI) {
 			"Do not use ask_user for routine confirmations that can be handled by existing tool safety prompts.",
 		],
 		parameters: AskUserParams,
+		executionMode: "sequential",
 
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
 			const mode = resolveMode(params);

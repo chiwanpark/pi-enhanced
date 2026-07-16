@@ -226,7 +226,7 @@ export default function statusbarExtension(pi: ExtensionAPI) {
 	}
 
 	pi.on("session_start", async (_event, ctx) => {
-		if (!ctx.hasUI) return;
+		if (ctx.mode !== "tui") return;
 
 		updateActiveProvider(ctx.model?.provider);
 
@@ -300,7 +300,9 @@ export default function statusbarExtension(pi: ExtensionAPI) {
 		}, POLL_INTERVAL_MS);
 	});
 
-	pi.on("model_select", async (event, _ctx) => {
+	pi.on("model_select", async (event, ctx) => {
+		if (ctx.mode !== "tui") return;
+
 		const changed = updateActiveProvider(event.model?.provider);
 		requestRender?.();
 		if (changed) {
@@ -308,7 +310,9 @@ export default function statusbarExtension(pi: ExtensionAPI) {
 		}
 	});
 
-	pi.on("agent_end", async (_event, _ctx) => {
+	pi.on("agent_settled", async (_event, ctx) => {
+		if (ctx.mode !== "tui") return;
+
 		requestRender?.();
 		await queueRefresh(true);
 	});
@@ -319,7 +323,7 @@ export default function statusbarExtension(pi: ExtensionAPI) {
 			pollTimer = undefined;
 		}
 		requestRender = undefined;
-		if (ctx.hasUI) {
+		if (ctx.mode === "tui") {
 			ctx.ui.setFooter(undefined);
 		}
 	});

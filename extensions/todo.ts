@@ -128,7 +128,7 @@ function formatToolText(todos: TodoItem[]): string {
 }
 
 function updateTodoWidget(ctx: ExtensionContext, todos: TodoItem[], visible = true): void {
-	if (!ctx.hasUI) return;
+	if (ctx.mode !== "tui") return;
 
 	if (!visible || todos.length === 0) {
 		ctx.ui.setWidget(TODO_WIDGET_ID, undefined);
@@ -226,6 +226,7 @@ export default function todoExtension(pi: ExtensionAPI) {
 			"Keep exactly one TODO item in_progress when actively working, and mark items completed as soon as they are done.",
 		],
 		parameters: WriteTodosParams,
+		executionMode: "sequential",
 
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 			const normalized = normalizeTodos(params.todos, nextId);
