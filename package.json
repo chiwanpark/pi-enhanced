@@ -1,5 +1,5 @@
 {
-  "name": "pi-enhanced",
+  "name": "@chiwanpark/pi-enhanced",
   "version": "0.1.0",
   "description": "My own Pi skills, extensions, and themes",
   "main": "index.js",
