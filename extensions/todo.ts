@@ -166,6 +166,7 @@ function updateTodoWidget(ctx: ExtensionContext, todos: TodoItem[], visible = tr
 				lines.push(truncateToWidth(theme.fg("dim", `… ${snapshot.length - visibleTodos.length} more`), contentWidth));
 			}
 
+			lines.push("");
 			return lines.map((line) => `${padding}${line}${padding}`);
 		},
 		invalidate() {},
@@ -290,15 +291,7 @@ export default function todoExtension(pi: ExtensionAPI) {
 			updateTodoWidget(ctx, todos, todoPanelVisible);
 			if (todos.length === 0) {
 				ctx.ui.notify("TODO list is empty", "info");
-				return;
 			}
-
-			pi.sendMessage({
-				customType: "todo-list",
-				content: formatToolText(todos),
-				display: true,
-				details: details(),
-			});
 		},
 	});
 

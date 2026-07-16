@@ -1,9 +1,8 @@
 import { CustomEditor, type ExtensionAPI, type KeybindingsManager, type Theme } from "@earendil-works/pi-coding-agent";
-import { visibleWidth, type EditorTheme, type TUI } from "@earendil-works/pi-tui";
+import { type EditorTheme, type TUI } from "@earendil-works/pi-tui";
 import { installThemePatches, loadEditorBgAnsi, styleBlockLine } from "./patch-theme";
 
-const CARET = "❯ ";
-const CONTINUATION = "  ";
+const EDITOR_PADDING_X = 1;
 
 type AutocompleteListLike = {
 	render(width: number): string[];
@@ -21,7 +20,11 @@ class StyledEditor extends CustomEditor {
 		keybindings: KeybindingsManager,
 		private readonly getTheme: () => Theme,
 	) {
-		super(tui, editorTheme, keybindings);
+		super(tui, editorTheme, keybindings, { paddingX: EDITOR_PADDING_X });
+	}
+
+	override setPaddingX(_padding: number): void {
+		super.setPaddingX(EDITOR_PADDING_X);
 	}
 
 	private styleLine(text: string, width: number): string {
@@ -39,19 +42,16 @@ class StyledEditor extends CustomEditor {
 	}
 
 	override render(width: number): string[] {
-		const innerWidth = Math.max(1, width - visibleWidth(CARET));
-		const lines = super.render(innerWidth);
-		const autocompleteLineCount = this.getAutocompleteLineCount(innerWidth);
+		const lines = super.render(width);
+		const autocompleteLineCount = this.getAutocompleteLineCount(width);
 		const bottomBorderIndex = Math.max(0, lines.length - 1 - autocompleteLineCount);
 		const contentLines = lines.slice(1, bottomBorderIndex);
 		const autocompleteLines = autocompleteLineCount > 0 ? lines.slice(bottomBorderIndex + 1) : [];
 		const emptyLine = this.styleLine("", width);
 
-		const caret = this.getTheme().fg("accent", CARET);
-
 		return [
 			emptyLine,
-			...contentLines.map((line, index) => this.styleLine(`${index === 0 ? caret : CONTINUATION}${line}`, width)),
+			...contentLines.map((line) => this.styleLine(line, width)),
 			...(autocompleteLines.length > 0 ? [emptyLine] : []),
 			...autocompleteLines.map((line) => this.styleLine(line, width)),
 			emptyLine,

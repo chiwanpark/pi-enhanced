@@ -6,10 +6,11 @@ import {
 	UserMessageComponent,
 	ModelSelectorComponent,
 	OAuthSelectorComponent,
+	SettingsSelectorComponent,
 	type ExtensionAPI,
 	type Theme,
 } from "@earendil-works/pi-coding-agent";
-import { Box, Loader, SelectList, SettingsList, Text } from "@earendil-works/pi-tui";
+import { Container, Input, Loader, SelectList, SettingsList } from "@earendil-works/pi-tui";
 import { installAssistantMarkdownPatch } from "./internal/assistant-markdown";
 import { installAssistantMessageFormatPatch } from "./internal/assistant-message-format";
 import { installAssistantMessageGapPatch } from "./internal/assistant-message-gap";
@@ -17,7 +18,10 @@ import { fitVisible } from "./internal/common";
 
 const ANSI_RESET = "\x1b[0m";
 const CARET = "❯ ";
-const TOOL_OUTPUT_PADDING_X = 2;
+const PANEL_PADDING_X = 1;
+const HISTORY_MESSAGE_PADDING_X = 1;
+const STARTUP_RESOURCE_PADDING_X = 1;
+const WORKING_INDICATOR_PADDING_X = 1;
 
 type ThemeColorValue = string | number;
 
@@ -38,7 +42,18 @@ type SettingsListLike = {
 	__piEnhancedEditorThemePatched?: boolean | undefined;
 };
 
+type SettingsPanelLike = {
+	render(width: number): string[];
+	__piEnhancedEditorThemePatched?: boolean | undefined;
+};
+
+type InputLike = {
+	render(width: number): string[];
+	__piEnhancedCaretPatched?: boolean | undefined;
+};
+
 type LoaderLike = {
+	kind?: unknown;
 	render(width: number): string[];
 	__piEnhancedIndicatorPaddingPatched?: boolean | undefined;
 };
@@ -72,13 +87,19 @@ type ToolExecutionComponentLike = {
 type PaddedComponentLike = {
 	paddingX?: unknown;
 	invalidate?: unknown;
-	render?: unknown;
 	setBgFn?: ((bgFn: (content: string) => string) => void) | undefined;
 };
 
 type ThemedComponentLike = {
 	render(width: number): string[];
 	__piEnhancedEditorThemePatched?: boolean | undefined;
+};
+
+type ContainerLike = {
+	children?: unknown[] | undefined;
+	constructor: { name?: string | undefined };
+	render(width: number): string[];
+	__piEnhancedPanelThemePatched?: boolean | undefined;
 };
 
 type ThemeSource = {
@@ -167,26 +188,6 @@ function markToolOutputPaddingPatched(prototype: {
 	return false;
 }
 
-const PADDING_PATCH_SYMBOL = Symbol.for("pi-enhanced.tool-padding-patched");
-
-function patchPaddedPrototype(prototype: unknown): void {
-	const p = prototype as Record<string | symbol, unknown>;
-	if (p[PADDING_PATCH_SYMBOL]) {
-		return;
-	}
-
-	const originalRender = p.render as ((this: Record<string, unknown>, width: number) => string[]) | undefined;
-	if (!originalRender) return;
-
-	p.render = function render(this: Record<string, unknown>, width: number): string[] {
-		if (this.paddingX === 1) {
-			this.paddingX = TOOL_OUTPUT_PADDING_X;
-		}
-		return originalRender.call(this, width);
-	};
-	p[PADDING_PATCH_SYMBOL] = true;
-}
-
 function resolveThemeVar(
 	value: ThemeColorValue | undefined,
 	vars: Record<string, ThemeColorValue | undefined> | undefined,
@@ -262,6 +263,18 @@ function trimLeadingVisibleSpace(line: string, width: number): string {
 	return fitVisible(line.slice(1), width);
 }
 
+function patchInputPrototype(prototype: InputLike): void {
+	if (prototype.__piEnhancedCaretPatched) {
+		return;
+	}
+
+	prototype.__piEnhancedCaretPatched = true;
+	const originalRender = prototype.render as RenderMethod<InputLike>;
+	prototype.render = function render(width: number): string[] {
+		return originalRender.call(this, width + 2).map((line) => fitVisible(stripPlainPrefix(line, "> "), width));
+	};
+}
+
 function patchLoaderPrototype(prototype: LoaderLike): void {
 	if (markIndicatorPaddingPatched(prototype)) {
 		return;
@@ -269,7 +282,13 @@ function patchLoaderPrototype(prototype: LoaderLike): void {
 
 	const originalRender = prototype.render as RenderMethod<LoaderLike>;
 	prototype.render = function render(width: number): string[] {
-		return originalRender.call(this, width).map((line) => trimLeadingVisibleSpace(line, width));
+		const isWorkingIndicator = this.kind === "working";
+		if (isWorkingIndicator) {
+			setHorizontalPadding(this, WORKING_INDICATOR_PADDING_X);
+		}
+
+		const lines = originalRender.call(this, width);
+		return isWorkingIndicator ? lines : lines.map((line) => trimLeadingVisibleSpace(line, width));
 	};
 }
 
@@ -289,17 +308,13 @@ function setHorizontalPadding(component: unknown, paddingX: number): void {
 	}
 }
 
-function removeHorizontalPadding(component: unknown): void {
-	setHorizontalPadding(component, 2);
-}
-
 function applyAssistantContentPadding(component: AssistantMessageComponentLike): void {
 	for (const child of component.contentContainer?.children ?? []) {
 		if (!child || typeof child !== "object" || typeof (child as PaddedComponentLike).paddingX !== "number") {
 			continue;
 		}
 
-		removeHorizontalPadding(child);
+		setHorizontalPadding(child, HISTORY_MESSAGE_PADDING_X);
 	}
 }
 
@@ -335,8 +350,8 @@ function patchToolExecutionPrototype(prototype: ToolExecutionComponentLike): voi
 
 	const originalRender = prototype.render as RenderMethod<ToolExecutionComponentLike>;
 	prototype.render = function render(width: number): string[] {
-		setHorizontalPadding(this.contentBox, TOOL_OUTPUT_PADDING_X);
-		setHorizontalPadding(this.contentText, TOOL_OUTPUT_PADDING_X);
+		setHorizontalPadding(this.contentBox, HISTORY_MESSAGE_PADDING_X);
+		setHorizontalPadding(this.contentText, HISTORY_MESSAGE_PADDING_X);
 		return originalRender.call(this, width);
 	};
 }
@@ -359,7 +374,7 @@ function patchUserMessagePrototype(prototype: UserMessageComponentLike, getTheme
 	const originalRender = prototype.render as RenderMethod<UserMessageComponentLike>;
 	prototype.render = function render(width: number): string[] {
 		const contentBox = findUserContentBox(this);
-		removeHorizontalPadding(contentBox);
+		setHorizontalPadding(contentBox, HISTORY_MESSAGE_PADDING_X);
 		applyEditorBackground(contentBox, loadEditorBgAnsi(getTheme()));
 		return originalRender.call(this, width);
 	};
@@ -387,14 +402,91 @@ function patchSettingsListPrototype(prototype: SettingsListLike, getTheme: () =>
 		const theme = getTheme();
 		const bgAnsi = loadEditorBgAnsi(theme);
 		const caret = theme.fg("accent", CARET);
-		return originalRender.call(this, width).map((line, index) => {
-			const styledLine = index === 0 ? `${caret}${stripPlainPrefix(line, "> ")}` : line;
+		return originalRender.call(this, width).map((line) => {
+			const styledLine = line.startsWith("> ") ? `${caret}${stripPlainPrefix(line, "> ")}` : line;
 			return styleBlockLine(styledLine, width, bgAnsi);
 		});
 	};
 }
 
-function patchEditorThemedComponentPrototype(prototype: ThemedComponentLike, getTheme: () => Theme): void {
+function patchSettingsPanelPrototype(prototype: SettingsPanelLike, getTheme: () => Theme): void {
+	if (markEditorThemePatched(prototype)) {
+		return;
+	}
+
+	const originalRender = prototype.render as RenderMethod<SettingsPanelLike>;
+	prototype.render = function render(width: number): string[] {
+		const lines = originalRender.call(this, width);
+		const lastLineIndex = lines.length - 1;
+		const bgAnsi = loadEditorBgAnsi(getTheme());
+		return lines.map((line, index) =>
+			styleBlockLine(index === 0 || index === lastLineIndex ? "" : line, width, bgAnsi),
+		);
+	};
+}
+
+function getComponentName(component: unknown): string | undefined {
+	if (!component || typeof component !== "object") {
+		return undefined;
+	}
+
+	return (component as { constructor?: { name?: string | undefined } | undefined }).constructor?.name;
+}
+
+function applyStartupResourcePadding(component: ContainerLike): void {
+	for (const child of component.children ?? []) {
+		if (getComponentName(child) === "ExpandableText") {
+			setHorizontalPadding(child, STARTUP_RESOURCE_PADDING_X);
+		}
+	}
+}
+
+function isPanelContainer(component: ContainerLike): boolean {
+	const children = component.children ?? [];
+	return getComponentName(children[0]) === "DynamicBorder" && getComponentName(children.at(-1)) === "DynamicBorder";
+}
+
+function patchPanelContainerPrototype(prototype: ContainerLike, getTheme: () => Theme): void {
+	if (prototype.__piEnhancedPanelThemePatched) {
+		return;
+	}
+
+	prototype.__piEnhancedPanelThemePatched = true;
+	const originalRender = prototype.render as RenderMethod<ContainerLike>;
+	prototype.render = function render(width: number): string[] {
+		applyStartupResourcePadding(this);
+
+		if (!isPanelContainer(this)) {
+			return originalRender.call(this, width);
+		}
+
+		const paddingX = Math.min(PANEL_PADDING_X, Math.max(0, Math.floor((width - 1) / 2)));
+		const contentWidth = Math.max(1, width - paddingX * 2);
+		const padding = " ".repeat(paddingX);
+		const lines = originalRender
+			.call(this, contentWidth)
+			.map((line) => `${padding}${fitVisible(line, contentWidth)}${padding}`);
+		if (this.constructor.name !== "ScopedModelsSelectorComponent") {
+			return lines;
+		}
+
+		const theme = getTheme();
+		const bgAnsi = loadEditorBgAnsi(theme);
+		const caret = theme.fg("accent", CARET);
+		const contentLines = lines.slice(1, -1);
+		contentLines.push("");
+		return contentLines.map((line) => {
+			const styledLine = line.startsWith("> ") ? `${caret}${stripPlainPrefix(line, "> ")}` : line;
+			return styleBlockLine(styledLine, width, bgAnsi);
+		});
+	};
+}
+
+function patchEditorThemedComponentPrototype(
+	prototype: ThemedComponentLike,
+	getTheme: () => Theme,
+	hideSurroundingLines = false,
+): void {
 	if (markEditorThemePatched(prototype)) {
 		return;
 	}
@@ -404,7 +496,9 @@ function patchEditorThemedComponentPrototype(prototype: ThemedComponentLike, get
 		const theme = getTheme();
 		const bgAnsi = loadEditorBgAnsi(theme);
 		const caret = theme.fg("accent", CARET);
-		return originalRender.call(this, width).map((line) => {
+		const lines = originalRender.call(this, width);
+		const contentLines = hideSurroundingLines ? lines.slice(1, -1) : lines;
+		return contentLines.map((line) => {
 			const styledLine = line.startsWith("> ") ? `${caret}${stripPlainPrefix(line, "> ")}` : line;
 			return styleBlockLine(styledLine, width, bgAnsi);
 		});
@@ -427,15 +521,16 @@ export function installThemePatches(source?: ThemeSource): void {
 	installAssistantMarkdownPatch();
 	installAssistantMessageGapPatch();
 
+	patchPanelContainerPrototype(Container.prototype, getTheme);
+	patchInputPrototype(Input.prototype);
 	patchLoaderPrototype(Loader.prototype);
-	patchPaddedPrototype(Box.prototype);
-	patchPaddedPrototype(Text.prototype);
 	patchAssistantMessagePrototype(AssistantMessageComponent.prototype as unknown as AssistantMessageComponentLike);
 	patchToolExecutionPrototype(ToolExecutionComponent.prototype as unknown as ToolExecutionComponentLike);
 	patchUserMessagePrototype(UserMessageComponent.prototype as unknown as UserMessageComponentLike, getTheme);
 	patchSelectListPrototype(SelectList.prototype, getTheme);
 	patchSettingsListPrototype(SettingsList.prototype, getTheme);
-	patchEditorThemedComponentPrototype(ModelSelectorComponent.prototype, getTheme);
+	patchSettingsPanelPrototype(SettingsSelectorComponent.prototype, getTheme);
+	patchEditorThemedComponentPrototype(ModelSelectorComponent.prototype, getTheme, true);
 	patchEditorThemedComponentPrototype(OAuthSelectorComponent.prototype, getTheme);
 	patchEditorThemedComponentPrototype(LoginDialogComponent.prototype, getTheme);
 }
