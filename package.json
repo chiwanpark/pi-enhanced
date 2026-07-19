@@ -29,7 +29,7 @@
     ]
   },
   "license": "MIT",
-  "packageManager": "pnpm@10.33.0",
+  "packageManager": "pnpm@11.14.0",
   "devDependencies": {
     "@earendil-works/pi-agent-core": "^0.80.7",
     "@earendil-works/pi-ai": "^0.80.7",

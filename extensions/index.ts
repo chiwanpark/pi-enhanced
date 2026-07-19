@@ -1,7 +1,6 @@
 import type { ExtensionAPI, ExtensionFactory } from "@earendil-works/pi-coding-agent";
 
 import askUserExtension from "./ask-user";
-import compactThresholdExtension from "./compact-threshold";
 import editorExtension from "./editor";
 import fileToolsExtension from "./file-tools";
 import patchThemeExtension from "./patch-theme";
@@ -32,7 +31,6 @@ export default composeExtensions(
 	todoExtension,
 	askUserExtension,
 	webSearchExtension,
-	compactThresholdExtension,
 	editorExtension,
 	fileToolsExtension,
 	planModeExtension,

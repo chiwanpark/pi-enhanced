@@ -23,7 +23,6 @@ Project settings override global settings.
 
 ### Items
 
-- `compactThresholdTokens`: The number of tokens to trigger auto-compaction (default: 100000). Other compaction options follow the original pi-mono configuration (`compaction`).
 - `semanticDiscipline`: Warns or blocks broad bash/file-tool scans and large/unbounded reads to encourage LSP/AST-first code navigation.
   - `mode`: `"off"`, `"warn"` (default), or `"block"`.
   - `warnLargeReadLines`: Read line count that triggers discipline feedback (default: 400).
@@ -37,7 +36,6 @@ Project settings override global settings.
 ```json
 {
   "piEnhanced": {
-    "compactThresholdTokens": 100000,
     "semanticDiscipline": {
       "mode": "warn",
       "warnLargeReadLines": 400,
