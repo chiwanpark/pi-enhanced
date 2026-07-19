@@ -1,10 +1,8 @@
 import { StringEnum, Type, type Static } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Text, truncateToWidth } from "@earendil-works/pi-tui";
+import { Text } from "@earendil-works/pi-tui";
 
-const TODO_WIDGET_ID = "pi-enhanced-todos";
 const TODO_TOOL_NAME = "write_todos";
-const TODO_WIDGET_PADDING_X = 1;
 
 const TodoStatus = StringEnum(["pending", "in_progress", "completed"] as const);
 const TodoPriority = StringEnum(["high", "medium", "low"] as const);
@@ -18,8 +16,7 @@ const TodoItemSchema = Type.Object({
 
 const WriteTodosParams = Type.Object({
 	todos: Type.Array(TodoItemSchema, {
-		description:
-			"Complete TODO list. Always include every current item; omitted items are removed from the visible TODO list.",
+		description: "Complete TODO list. Always include every current item; omitted items are removed.",
 	}),
 });
 
@@ -64,17 +61,6 @@ function statusIcon(status: TodoStatusValue): string {
 			return "◐";
 		case "pending":
 			return "○";
-	}
-}
-
-function priorityRank(priority: TodoPriorityValue): number {
-	switch (priority) {
-		case "high":
-			return 0;
-		case "medium":
-			return 1;
-		case "low":
-			return 2;
 	}
 }
 
@@ -127,56 +113,9 @@ function formatToolText(todos: TodoItem[]): string {
 	return lines.join("\n");
 }
 
-function updateTodoWidget(ctx: ExtensionContext, todos: TodoItem[], visible = true): void {
-	if (ctx.mode !== "tui") return;
-
-	if (!visible || todos.length === 0) {
-		ctx.ui.setWidget(TODO_WIDGET_ID, undefined);
-		return;
-	}
-
-	const snapshot = todos.map((todo) => ({ ...todo }));
-	ctx.ui.setWidget(TODO_WIDGET_ID, (_tui, theme) => ({
-		render(width: number): string[] {
-			const contentWidth = Math.max(1, width - TODO_WIDGET_PADDING_X * 2);
-			const padding = " ".repeat(TODO_WIDGET_PADDING_X);
-			const stats = todoStats(snapshot);
-			const activeTodos = snapshot
-				.filter((todo) => todo.status !== "completed")
-				.sort((a, b) => priorityRank(a.priority) - priorityRank(b.priority));
-			const completedTodos = snapshot.filter((todo) => todo.status === "completed");
-			const visibleTodos = [...activeTodos, ...completedTodos].slice(0, 8);
-
-			const lines = [
-				truncateToWidth(
-					`${theme.fg("accent", theme.bold("TODO"))} ${theme.fg("dim", `${stats.completed}/${stats.total} done`)}`,
-					contentWidth,
-				),
-			];
-
-			for (const todo of visibleTodos) {
-				const iconColor = todo.status === "completed" ? "success" : todo.status === "in_progress" ? "warning" : "dim";
-				const priorityColor = todo.priority === "high" ? "error" : todo.priority === "medium" ? "warning" : "dim";
-				const contentColor = todo.status === "completed" ? "dim" : "text";
-				const line = `${theme.fg(iconColor, statusIcon(todo.status))} ${theme.fg(priorityColor, todo.priority[0]?.toUpperCase() ?? "?")} ${theme.fg(contentColor, todo.content)}`;
-				lines.push(truncateToWidth(line, contentWidth, theme.fg("dim", "…")));
-			}
-
-			if (snapshot.length > visibleTodos.length) {
-				lines.push(truncateToWidth(theme.fg("dim", `… ${snapshot.length - visibleTodos.length} more`), contentWidth));
-			}
-
-			lines.push("");
-			return lines.map((line) => `${padding}${line}${padding}`);
-		},
-		invalidate() {},
-	}));
-}
-
 export default function todoExtension(pi: ExtensionAPI) {
 	let todos: TodoItem[] = [];
 	let nextId = 1;
-	let todoPanelVisible = true;
 
 	function details(): TodoDetails {
 		return {
@@ -202,38 +141,26 @@ export default function todoExtension(pi: ExtensionAPI) {
 		}
 	}
 
-	pi.on("session_start", async (_event, ctx) => {
-		reconstructState(ctx);
-		updateTodoWidget(ctx, todos, todoPanelVisible);
-	});
-
-	pi.on("session_tree", async (_event, ctx) => {
-		reconstructState(ctx);
-		updateTodoWidget(ctx, todos, todoPanelVisible);
-	});
-
-	pi.on("session_shutdown", async (_event, ctx) => {
-		if (ctx.hasUI) ctx.ui.setWidget(TODO_WIDGET_ID, undefined);
-	});
+	pi.on("session_start", async (_event, ctx) => reconstructState(ctx));
+	pi.on("session_tree", async (_event, ctx) => reconstructState(ctx));
 
 	pi.registerTool({
 		name: TODO_TOOL_NAME,
 		label: "Write Todos",
-		description: "Replace the current visible TODO list with an updated TODO list.",
-		promptSnippet: "Create, replace, or update the visible TODO list shown to the user.",
+		description: "Replace the current TODO list with an updated TODO list.",
+		promptSnippet: "Create, replace, or update the current TODO list.",
 		promptGuidelines: [
-			"Use write_todos to track multi-step work and keep the visible TODO list current for the user.",
+			"Use write_todos to track multi-step work and keep the TODO list current.",
 			"When calling write_todos, include the complete current TODO list; omitted items are removed.",
 			"Keep exactly one TODO item in_progress when actively working, and mark items completed as soon as they are done.",
 		],
 		parameters: WriteTodosParams,
 		executionMode: "sequential",
 
-		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+		async execute(_toolCallId, params) {
 			const normalized = normalizeTodos(params.todos, nextId);
 			todos = normalized.todos;
 			nextId = normalized.nextId;
-			updateTodoWidget(ctx, todos, todoPanelVisible);
 
 			return {
 				content: [{ type: "text", text: formatToolText(todos) }],
@@ -284,25 +211,15 @@ export default function todoExtension(pi: ExtensionAPI) {
 		},
 	});
 
-	pi.registerCommand("todos", {
-		description: "Show the current TODO list and restore the TODO panel",
-		handler: async (_args, ctx) => {
-			todoPanelVisible = true;
-			updateTodoWidget(ctx, todos, todoPanelVisible);
-			if (todos.length === 0) {
-				ctx.ui.notify("TODO list is empty", "info");
-			}
-		},
-	});
-
-	pi.registerCommand("hide-todos", {
-		description: "Hide the TODO panel",
-		handler: async (_args, ctx) => {
-			todoPanelVisible = false;
-			if (ctx.hasUI) {
-				ctx.ui.setWidget(TODO_WIDGET_ID, undefined);
-				ctx.ui.notify("TODO panel hidden. Run /todos to show it again.", "info");
-			}
+	pi.registerCommand("todo", {
+		description: "Print the current TODO list",
+		handler: async () => {
+			pi.sendMessage({
+				customType: "todo-list",
+				content: formatToolText(todos),
+				display: true,
+				details: details(),
+			});
 		},
 	});
 
