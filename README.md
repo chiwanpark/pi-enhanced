@@ -8,6 +8,10 @@ A simple but powerful toolkits for pi-mono agent.
 pi install git:https://github.com/chiwanpark/pi-enhanced
 ```
 
+## Tools
+
+- `search_web`: Searches the public web through the OpenAI Codex Search API and returns a concise summary with sources. It uses the `openai-codex` OAuth credentials stored by pi; run `/login openai-codex` before using it.
+
 ## Configuration
 
 This package reads the extension-specific configuration from these files, in order:
@@ -51,3 +55,4 @@ Project settings override global settings.
 
 - [vinyroli/pi-codex-theme](https://github.com/vinyroli/pi-codex-theme)
 - [ajarellanod/pi-usage-bars](https://github.com/ajarellanod/pi-usage-bars)
+- [Winds-AI/pi-native-codex-web-search](https://github.com/Winds-AI/pi-native-codex-web-search)

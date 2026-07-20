@@ -12,6 +12,7 @@ import statusbarExtension from "./statusbar";
 import todoExtension from "./todo";
 import tokenDisciplineExtension from "./token-discipline";
 import transcriptExtension from "./transcript";
+import webSearchExtension from "./web-search";
 import welcomeExtension from "./welcome";
 
 function composeExtensions(...extensions: ExtensionFactory[]): ExtensionFactory {
@@ -30,6 +31,7 @@ export default composeExtensions(
 	semanticDisciplineExtension,
 	todoExtension,
 	askUserExtension,
+	webSearchExtension,
 	compactThresholdExtension,
 	editorExtension,
 	fileToolsExtension,
