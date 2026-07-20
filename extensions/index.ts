@@ -8,6 +8,7 @@ import planModeExtension from "./plan-mode";
 import statusCommandExtension from "./status-command";
 import semanticDisciplineExtension from "./semantic-discipline";
 import statusbarExtension from "./statusbar";
+import systemPromptCommandExtension from "./system-prompt-command";
 import todoExtension from "./todo";
 import tokenDisciplineExtension from "./token-discipline";
 import transcriptExtension from "./transcript";
@@ -36,4 +37,5 @@ export default composeExtensions(
 	planModeExtension,
 	statusbarExtension,
 	statusCommandExtension,
+	systemPromptCommandExtension,
 );
