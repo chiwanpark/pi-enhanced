@@ -2,7 +2,7 @@ import { Type, type Static } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { opendir, readFile, realpath, stat } from "node:fs/promises";
-import { isAbsolute, relative, resolve, sep, matchesGlob } from "node:path";
+import { relative, resolve, sep, matchesGlob } from "node:path";
 
 const DEFAULT_IGNORES = [
 	"**/.git/**",
@@ -14,6 +14,8 @@ const DEFAULT_IGNORES = [
 	"**/.turbo/**",
 	"**/.cache/**",
 ] as const;
+const DEFAULT_IGNORES_DESCRIPTION =
+	"Apply default ignores: .git, node_modules, dist, build, coverage, .next, .turbo, and .cache. Defaults to true; set false to include them.";
 
 const MAX_RESULTS_CAP = 1_000;
 const DEFAULT_MAX_RESULTS = 200;
@@ -27,6 +29,7 @@ const GlobParams = Type.Object({
 	includeHidden: Type.Optional(
 		Type.Boolean({ description: "Include hidden files and directories. Defaults to false." }),
 	),
+	useDefaultIgnores: Type.Optional(Type.Boolean({ description: DEFAULT_IGNORES_DESCRIPTION })),
 	maxResults: Type.Optional(
 		Type.Number({ description: "Maximum matched paths to return. Defaults to 200, capped at 1000." }),
 	),
@@ -45,6 +48,7 @@ const GrepParams = Type.Object({
 	includeHidden: Type.Optional(
 		Type.Boolean({ description: "Include hidden files and directories. Defaults to false." }),
 	),
+	useDefaultIgnores: Type.Optional(Type.Boolean({ description: DEFAULT_IGNORES_DESCRIPTION })),
 	maxResults: Type.Optional(
 		Type.Number({ description: "Maximum matching lines to return. Defaults to 200, capped at 1000." }),
 	),
@@ -57,6 +61,7 @@ const LsParams = Type.Object({
 	includeHidden: Type.Optional(
 		Type.Boolean({ description: "Include hidden files and directories. Defaults to false." }),
 	),
+	useDefaultIgnores: Type.Optional(Type.Boolean({ description: DEFAULT_IGNORES_DESCRIPTION })),
 	maxEntries: Type.Optional(
 		Type.Number({ description: "Maximum entries to return. Defaults to 200, capped at 1000." }),
 	),
@@ -83,30 +88,18 @@ function normalizePath(input: string | undefined): string {
 	return path.startsWith("@") ? path.slice(1) : path;
 }
 
-function isInside(root: string, target: string): boolean {
-	const rel = relative(root, target);
-	return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
-}
-
-async function safeResolve(ctx: ExtensionContext, input: string | undefined): Promise<string> {
-	const root = resolve(ctx.cwd);
-	const candidate = resolve(root, normalizePath(input));
-	if (!isInside(root, candidate)) throw new Error(`Path escapes the workspace: ${input ?? "."}`);
-	return candidate;
-}
-
 function toRelative(ctx: ExtensionContext, absolutePath: string): string {
 	const rel = relative(resolve(ctx.cwd), absolutePath).split(sep).join("/");
 	return rel === "" ? "." : rel;
 }
 
 function isHiddenRelative(path: string): boolean {
-	return path.split("/").some((part) => part.startsWith("."));
+	return path.split("/").some((part) => part !== "." && part !== ".." && part.startsWith("."));
 }
 
-function shouldIgnore(relPath: string, includeHidden: boolean): boolean {
+function shouldIgnore(relPath: string, includeHidden: boolean, useDefaultIgnores: boolean): boolean {
 	if (!includeHidden && isHiddenRelative(relPath)) return true;
-	return DEFAULT_IGNORES.some((pattern) => matchesGlob(relPath, pattern));
+	return useDefaultIgnores && DEFAULT_IGNORES.some((pattern) => matchesGlob(relPath, pattern));
 }
 
 function entryType(dirent: { isDirectory(): boolean; isFile(): boolean; isSymbolicLink(): boolean }): Entry["type"] {
@@ -145,6 +138,7 @@ async function walkFiles(
 	root: string,
 	options: {
 		includeHidden: boolean;
+		useDefaultIgnores: boolean;
 		maxEntries: number;
 		signal?: AbortSignal | undefined;
 		includeDirectories?: boolean;
@@ -179,7 +173,7 @@ async function walkFiles(
 			options.signal?.throwIfAborted();
 			const absolutePath = resolve(directory, dirent.name);
 			const relPath = toRelative(ctx, absolutePath);
-			if (shouldIgnore(relPath, options.includeHidden)) continue;
+			if (shouldIgnore(relPath, options.includeHidden, options.useDefaultIgnores)) continue;
 
 			const type = entryType(dirent);
 			const resolvedTargetType = type === "symlink" ? await targetType(absolutePath) : undefined;
@@ -261,7 +255,7 @@ export default function fileToolsExtension(pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "glob",
 		label: "Glob",
-		description: "Find files by glob pattern inside the current workspace, with safe defaults and bounded results.",
+		description: "Find files by glob pattern, with safe defaults and bounded results.",
 		promptSnippet: "Find files by glob pattern with bounded results and common generated directories ignored.",
 		promptGuidelines: [
 			"Use glob for scoped file discovery instead of broad find/tree/bash scans.",
@@ -269,10 +263,11 @@ export default function fileToolsExtension(pi: ExtensionAPI) {
 		],
 		parameters: GlobParams,
 		async execute(_toolCallId, params: GlobInput, signal, _onUpdate, ctx) {
-			const root = await safeResolve(ctx, params.path);
+			const root = resolve(ctx.cwd, normalizePath(params.path));
 			const maxResults = clamp(params.maxResults, DEFAULT_MAX_RESULTS, 1, MAX_RESULTS_CAP);
 			const matches = await walkFiles(ctx, root, {
 				includeHidden: params.includeHidden === true,
+				useDefaultIgnores: params.useDefaultIgnores !== false,
 				maxEntries: maxResults + 1,
 				signal,
 				onEntry: (entry) => isFileEntry(entry) && matchesEntryPattern(entry, root, params.pattern),
@@ -291,7 +286,7 @@ export default function fileToolsExtension(pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "grep",
 		label: "Grep",
-		description: "Search text files inside the current workspace with optional glob filtering and bounded results.",
+		description: "Search text files with optional glob filtering and bounded results.",
 		promptSnippet: "Search text files with optional file glob filters and bounded results.",
 		promptGuidelines: [
 			"Use grep for literal strings, docs, config keys, routes, CSS classes, or unsupported languages; prefer LSP/AST tools for code symbols.",
@@ -299,11 +294,12 @@ export default function fileToolsExtension(pi: ExtensionAPI) {
 		],
 		parameters: GrepParams,
 		async execute(_toolCallId, params: GrepInput, signal, _onUpdate, ctx) {
-			const root = await safeResolve(ctx, params.path);
+			const root = resolve(ctx.cwd, normalizePath(params.path));
 			const maxResults = clamp(params.maxResults, DEFAULT_MAX_RESULTS, 1, MAX_RESULTS_CAP);
 			const regex = compilePattern(params);
 			const entries = await walkFiles(ctx, root, {
 				includeHidden: params.includeHidden === true,
+				useDefaultIgnores: params.useDefaultIgnores !== false,
 				maxEntries: 10_000,
 				signal,
 			});
@@ -343,16 +339,17 @@ export default function fileToolsExtension(pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "ls",
 		label: "List",
-		description: "List directory entries inside the current workspace with bounded output.",
+		description: "List directory entries with bounded output.",
 		promptSnippet: "List directory entries with bounded output.",
 		promptGuidelines: ["Use ls for targeted directory inspection; use code_overview for initial repository mapping."],
 		parameters: LsParams,
 		async execute(_toolCallId, params: LsInput, signal, _onUpdate, ctx) {
-			const root = await safeResolve(ctx, params.path);
+			const root = resolve(ctx.cwd, normalizePath(params.path));
 			const maxEntries = clamp(params.maxEntries, DEFAULT_MAX_RESULTS, 1, MAX_RESULTS_CAP);
 			const depth = params.recursive === true ? clamp(params.depth, 3, 0, 10) : 0;
 			const entries = await walkFiles(ctx, root, {
 				includeHidden: params.includeHidden === true,
+				useDefaultIgnores: params.useDefaultIgnores !== false,
 				maxEntries: maxEntries + 1,
 				signal,
 				includeDirectories: true,
