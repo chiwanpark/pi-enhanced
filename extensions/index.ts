@@ -4,6 +4,7 @@ import askUserExtension from "./ask-user";
 import conciseBuiltinsExtension from "./concise-builtins";
 import editorExtension from "./editor";
 import fileToolsExtension from "./file-tools";
+import harmfulCommandGuardExtension from "./harmful-command-guard";
 import patchThemeExtension from "./patch-theme";
 import planModeExtension from "./plan-mode";
 import statusCommandExtension from "./status-command";
@@ -29,6 +30,7 @@ export default composeExtensions(
 	patchThemeExtension,
 	conciseBuiltinsExtension,
 	transcriptExtension,
+	harmfulCommandGuardExtension,
 	semanticDisciplineExtension,
 	todoExtension,
 	askUserExtension,
