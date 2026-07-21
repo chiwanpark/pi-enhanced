@@ -53,11 +53,8 @@ export default function askUserExtension(pi: ExtensionAPI) {
 		name: ASK_USER_TOOL_NAME,
 		label: "Ask User",
 		description: "Ask the user a focused question and return their answer to the agent.",
-		promptSnippet: "Ask the user a focused question when progress is blocked by missing information.",
 		promptGuidelines: [
-			"Use ask_user only when the user's answer is required to continue and cannot be safely inferred.",
-			"Before calling ask_user, explain the uncertainty in the question and offer clear choices when possible.",
-			"Do not use ask_user for routine confirmations that can be handled by existing tool safety prompts.",
+			"Use `ask_user` only when required information cannot be safely inferred. Explain the uncertainty and provide concise choices when useful.",
 		],
 		parameters: AskUserParams,
 		executionMode: "sequential",

@@ -256,11 +256,6 @@ export default function fileToolsExtension(pi: ExtensionAPI) {
 		name: "glob",
 		label: "Glob",
 		description: "Find files by glob pattern, with safe defaults and bounded results.",
-		promptSnippet: "Find files by glob pattern with bounded results and common generated directories ignored.",
-		promptGuidelines: [
-			"Use glob for scoped file discovery instead of broad find/tree/bash scans.",
-			"Keep glob patterns narrow and avoid searching generated directories unless explicitly needed.",
-		],
 		parameters: GlobParams,
 		async execute(_toolCallId, params: GlobInput, signal, _onUpdate, ctx) {
 			const root = resolve(ctx.cwd, normalizePath(params.path));
@@ -287,11 +282,6 @@ export default function fileToolsExtension(pi: ExtensionAPI) {
 		name: "grep",
 		label: "Grep",
 		description: "Search text files with optional glob filtering and bounded results.",
-		promptSnippet: "Search text files with optional file glob filters and bounded results.",
-		promptGuidelines: [
-			"Use grep for literal strings, docs, config keys, routes, CSS classes, or unsupported languages; prefer LSP/AST tools for code symbols.",
-			"Always scope grep with path or glob when possible to keep searches efficient.",
-		],
 		parameters: GrepParams,
 		async execute(_toolCallId, params: GrepInput, signal, _onUpdate, ctx) {
 			const root = resolve(ctx.cwd, normalizePath(params.path));
@@ -340,8 +330,6 @@ export default function fileToolsExtension(pi: ExtensionAPI) {
 		name: "ls",
 		label: "List",
 		description: "List directory entries with bounded output.",
-		promptSnippet: "List directory entries with bounded output.",
-		promptGuidelines: ["Use ls for targeted directory inspection; use code_overview for initial repository mapping."],
 		parameters: LsParams,
 		async execute(_toolCallId, params: LsInput, signal, _onUpdate, ctx) {
 			const root = resolve(ctx.cwd, normalizePath(params.path));

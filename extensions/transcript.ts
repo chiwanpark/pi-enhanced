@@ -1,6 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-import { appendAssistantFormatGuidance, normalizeAssistantMarkdown } from "./internal/assistant-format";
+import { normalizeAssistantMarkdown } from "./internal/assistant-format";
 
 const TRANSCRIPT_PREFIX = "• ";
 const TRANSCRIPT_CONTINUATION = "  ";
@@ -159,10 +159,6 @@ function stripMessageDecoration(message: MessageLike): MessageLike {
 }
 
 export default function transcriptExtension(pi: ExtensionAPI) {
-	pi.on("before_agent_start", async (event) => ({
-		systemPrompt: appendAssistantFormatGuidance(event.systemPrompt),
-	}));
-
 	pi.on("input", async (event) => {
 		if (event.source === "extension") {
 			return { action: "continue" as const };

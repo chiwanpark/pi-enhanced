@@ -35,19 +35,6 @@ const DEFAULT_CONFIG: SemanticDisciplineConfig = {
 	warnBroadBash: true,
 };
 
-const SEMANTIC_DISCIPLINE_GUIDANCE = [
-	"Semantic code navigation policy:",
-	"- For unfamiliar repositories, call code_overview before using ls, find, tree, or broad directory scans.",
-	"- For named code symbols, use lsp_symbols, lsp_definition, lsp_references, lsp_hover, or ast_search before rg/grep.",
-	"- For definitions, references, hovers, diagnostics, completions, and renames, use LSP tools instead of textual search.",
-	"- Use ast_search/code_rewrite for source-code structure and transformations instead of regex search/replace.",
-	"- Use rg/grep only for literal strings, docs, configs, routes, CSS classes, test titles, generated files, unsupported languages, or after semantic tools fail.",
-	"- If using bash search, scope it to the smallest path and file glob; avoid repo-wide scans and installed/generated directories.",
-	"- Do not read entire large files. Prefer document symbols, hover, definitions, references, diagnostics, or small read slices.",
-	"- Good: code_overview -> lsp_symbols/ast_search -> lsp_definition/lsp_references -> read only relevant slices.",
-	"- Bad: ls/find/tree for initial repo mapping, repo-wide rg for symbols, or unbounded reads of large source files.",
-].join("\n");
-
 function notify(ctx: ExtensionContext, message: string, level: "info" | "warning" | "error" = "warning"): void {
 	if (!ctx.hasUI) return;
 	ctx.ui.notify(message, level);
@@ -238,19 +225,8 @@ function fingerprint(toolName: string, finding: Finding, detail: string): string
 	return `${toolName}:${finding.kind}:${finding.reason}:${detail.slice(0, 160)}`;
 }
 
-export function appendSemanticDisciplineGuidance(systemPrompt: string): string {
-	if (systemPrompt.includes(SEMANTIC_DISCIPLINE_GUIDANCE)) {
-		return systemPrompt;
-	}
-	return `${systemPrompt}\n\n${SEMANTIC_DISCIPLINE_GUIDANCE}`;
-}
-
 export default function semanticDisciplineExtension(pi: ExtensionAPI) {
 	const notified = new Set<string>();
-
-	pi.on("before_agent_start", async (event) => ({
-		systemPrompt: appendSemanticDisciplineGuidance(event.systemPrompt),
-	}));
 
 	pi.on("tool_call", async (event, ctx) => {
 		const config = loadConfig(ctx.cwd);

@@ -148,11 +148,8 @@ export default function todoExtension(pi: ExtensionAPI) {
 		name: TODO_TOOL_NAME,
 		label: "Write Todos",
 		description: "Replace the current TODO list with an updated TODO list.",
-		promptSnippet: "Create, replace, or update the current TODO list.",
 		promptGuidelines: [
-			"Use write_todos to track multi-step work and keep the TODO list current.",
-			"When calling write_todos, include the complete current TODO list; omitted items are removed.",
-			"Keep exactly one TODO item in_progress when actively working, and mark items completed as soon as they are done.",
+			"Use `write_todos` for multi-step work. Send the complete list, keep one active item `in_progress`, and mark completed work promptly.",
 		],
 		parameters: WriteTodosParams,
 		executionMode: "sequential",

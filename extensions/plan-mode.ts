@@ -1,16 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getGlobalPiSettingsPath, getProjectPiSettingsPath } from "./internal/common";
-
-const PLAN_MODE_GUIDELINES = [
-	"Plan Mode Guidelines:",
-	"- The user is currently in Plan Mode.",
-	"- Your objective is to explore the project, understand the requirements, and formulate a detailed step-by-step plan.",
-	"- Do NOT write or edit code, and do NOT execute system-modifying bash commands.",
-	"- Use code reading, searching, and LSP tools to gather context.",
-	"- Once the plan is ready, register the final step-by-step TODOs using the `write_todos` tool.",
-	"- After writing the TODOs, explicitly ask the user to review and confirm the plan.",
-].join("\n");
+import { PLAN_MODE_STATE_EVENT } from "./internal/plan-mode-state";
 
 const DEFAULT_BLOCKED_TOOLS = ["bash", "edit", "write"];
 
@@ -66,25 +57,24 @@ export default function planModeExtension(pi: ExtensionAPI) {
 		return active;
 	}
 
+	function publishState(active: boolean): void {
+		pi.events.emit(PLAN_MODE_STATE_EVENT, { active });
+	}
+
+	pi.on("session_start", async (_event, ctx) => publishState(getActiveState(ctx)));
+	pi.on("session_tree", async (_event, ctx) => publishState(getActiveState(ctx)));
+
 	pi.registerCommand("plan", {
 		description: "Toggle Plan Mode on or off.",
 		handler: async (_args, ctx) => {
 			const currentState = getActiveState(ctx);
 			const nextState = !currentState;
 			pi.appendEntry("plan-mode", { active: nextState });
+			publishState(nextState);
 
 			const status = nextState ? "ON (read-only, planning)" : "OFF (write enabled)";
 			ctx.ui.notify(`Plan Mode is now ${status}.`, "info");
 		},
-	});
-
-	pi.on("before_agent_start", async (event, ctx) => {
-		if (getActiveState(ctx)) {
-			return {
-				systemPrompt: `${event.systemPrompt}\n\n${PLAN_MODE_GUIDELINES}`,
-			};
-		}
-		return undefined;
 	});
 
 	pi.on("tool_call", async (event, ctx) => {
@@ -92,7 +82,7 @@ export default function planModeExtension(pi: ExtensionAPI) {
 		if (getActiveState(ctx) && blockedTools.has(event.toolName)) {
 			return {
 				block: true,
-				reason: `Tool '${event.toolName}' is blocked in Plan Mode. Your objective is to analyze and write a plan using 'write_todos'.`,
+				reason: `Tool \`${event.toolName}\` is blocked in Plan Mode. Analyze the task and write a plan using \`write_todos\`.`,
 			};
 		}
 		return undefined;
