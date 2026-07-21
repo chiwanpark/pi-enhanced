@@ -1,11 +1,15 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { getOAuthApiKey } from "@earendil-works/pi-ai/oauth";
+import type { OAuthAuth, OAuthCredential } from "@earendil-works/pi-ai";
+import { anthropicProvider } from "@earendil-works/pi-ai/providers/anthropic";
+import { githubCopilotProvider } from "@earendil-works/pi-ai/providers/github-copilot";
+import { openaiCodexProvider } from "@earendil-works/pi-ai/providers/openai-codex";
 
 export type SupportedProvider = "openai-codex" | "anthropic" | "google-gemini-cli" | "github-copilot";
 
 export type AuthEntry = {
+	type?: "oauth";
 	access?: string;
 	refresh?: string;
 	expires?: number;
@@ -228,6 +232,19 @@ function googleHeaders(token: string, projectId?: string): Record<string, string
 	};
 }
 
+function getProviderOAuth(provider: SupportedProvider): OAuthAuth | undefined {
+	switch (provider) {
+		case "openai-codex":
+			return openaiCodexProvider().auth.oauth;
+		case "anthropic":
+			return anthropicProvider().auth.oauth;
+		case "github-copilot":
+			return githubCopilotProvider().auth.oauth;
+		case "google-gemini-cli":
+			return undefined;
+	}
+}
+
 export async function refreshUsageAuthIfNeeded(
 	auth: AuthData,
 	provider: SupportedProvider,
@@ -244,14 +261,22 @@ export async function refreshUsageAuthIfNeeded(
 	if (!shouldRefresh) return auth;
 
 	try {
-		const resolved = await getOAuthApiKey(provider, auth as Record<string, any>);
-		if (!resolved?.newCredentials) return auth;
+		const oauth = getProviderOAuth(provider);
+		if (!oauth) throw new Error(`OAuth refresh is not available for ${provider}`);
 
+		const credentials: OAuthCredential = {
+			...current,
+			type: "oauth",
+			access: current.access ?? "",
+			refresh: current.refresh,
+			expires: current.expires ?? 0,
+		};
+		const refreshed = await oauth.refresh(credentials);
 		const next: AuthData = {
 			...auth,
 			[provider]: {
 				...current,
-				...(resolved.newCredentials as AuthEntry),
+				...refreshed,
 			},
 		};
 

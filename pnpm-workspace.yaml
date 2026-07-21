@@ -1,4 +1,9 @@
 allowBuilds:
-  '@google/genai': true
+  "@google/genai": true
   koffi: true
   protobufjs: true
+minimumReleaseAgeExclude:
+  - "@earendil-works/pi-agent-core@0.81.1"
+  - "@earendil-works/pi-ai@0.81.1"
+  - "@earendil-works/pi-coding-agent@0.81.1"
+  - "@earendil-works/pi-tui@0.81.1"
