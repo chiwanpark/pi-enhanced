@@ -2,9 +2,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import os from "node:os";
 import path from "node:path";
 import type { OAuthAuth, OAuthCredential } from "@earendil-works/pi-ai";
-import { anthropicProvider } from "@earendil-works/pi-ai/providers/anthropic";
-import { githubCopilotProvider } from "@earendil-works/pi-ai/providers/github-copilot";
-import { openaiCodexProvider } from "@earendil-works/pi-ai/providers/openai-codex";
+import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 
 export type SupportedProvider = "openai-codex" | "anthropic" | "google-gemini-cli" | "github-copilot";
 
@@ -232,17 +230,13 @@ function googleHeaders(token: string, projectId?: string): Record<string, string
 	};
 }
 
-function getProviderOAuth(provider: SupportedProvider): OAuthAuth | undefined {
-	switch (provider) {
-		case "openai-codex":
-			return openaiCodexProvider().auth.oauth;
-		case "anthropic":
-			return anthropicProvider().auth.oauth;
-		case "github-copilot":
-			return githubCopilotProvider().auth.oauth;
-		case "google-gemini-cli":
-			return undefined;
-	}
+async function getProviderOAuth(provider: SupportedProvider, authFile?: string): Promise<OAuthAuth | undefined> {
+	const runtime = await ModelRuntime.create({
+		authPath: authFile ?? USAGE_AUTH_FILE,
+		modelsPath: null,
+		allowModelNetwork: false,
+	});
+	return runtime.getProvider(provider)?.auth.oauth;
 }
 
 export async function refreshUsageAuthIfNeeded(
@@ -261,7 +255,7 @@ export async function refreshUsageAuthIfNeeded(
 	if (!shouldRefresh) return auth;
 
 	try {
-		const oauth = getProviderOAuth(provider);
+		const oauth = await getProviderOAuth(provider, options.authFile);
 		if (!oauth) throw new Error(`OAuth refresh is not available for ${provider}`);
 
 		const credentials: OAuthCredential = {
