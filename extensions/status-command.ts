@@ -327,12 +327,12 @@ async function buildStatusReport(ctx: ExtensionCommandContext, pi: ExtensionAPI)
 }
 
 export default function statusCommandExtension(pi: ExtensionAPI) {
-	pi.registerMessageRenderer<StatusReport>("status-report", (message, _options, theme) => {
+	pi.registerMessageRenderer<StatusReport>("status-report", (message, { outputPad }, theme) => {
 		const report = message.details;
 		if (!report) {
-			return new Text(theme.fg("warning", "Status unavailable"), 0, 0);
+			return new Text(theme.fg("warning", "Status unavailable"), outputPad, 0);
 		}
-		return new Text(buildStatusBox(theme, report).join("\n"), 0, 0);
+		return new Text(buildStatusBox(theme, report).join("\n"), outputPad, 0);
 	});
 
 	pi.registerCommand("status", {

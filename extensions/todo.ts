@@ -220,10 +220,10 @@ export default function todoExtension(pi: ExtensionAPI) {
 		},
 	});
 
-	pi.registerMessageRenderer<TodoDetails>("todo-list", (message, _options, theme) => {
+	pi.registerMessageRenderer<TodoDetails>("todo-list", (message, { outputPad }, theme) => {
 		const toolDetails = message.details;
 		if (!toolDetails || toolDetails.todos.length === 0) {
-			return new Text(theme.fg("dim", "TODO list is empty"), 0, 0);
+			return new Text(theme.fg("dim", "TODO list is empty"), outputPad, 0);
 		}
 
 		const lines = [
@@ -244,6 +244,6 @@ export default function todoExtension(pi: ExtensionAPI) {
 			);
 		}
 
-		return new Text(lines.join("\n"), 0, 0);
+		return new Text(lines.join("\n"), outputPad, 0);
 	});
 }

@@ -7,9 +7,9 @@ interface SystemPromptEntryData {
 
 const CUSTOM_TYPE = "system-prompt";
 
-function renderSystemPrompt(prompt: string, theme: Theme): Box {
+function renderSystemPrompt(prompt: string, theme: Theme, outputPad = 1): Box {
 	const title = `System prompt (${prompt.length.toLocaleString()} characters)`;
-	const box = new Box(1, 1, (text) => theme.bg("customMessageBg", text));
+	const box = new Box(outputPad, 1, (text) => theme.bg("customMessageBg", text));
 	box.addChild(new Text(`${theme.fg("accent", theme.bold(title))}\n\n${prompt}`, 0, 0));
 	return box;
 }
@@ -20,7 +20,7 @@ export default function systemPromptCommandExtension(pi: ExtensionAPI) {
 		renderSystemPrompt(entry.data?.prompt ?? "", theme),
 	);
 
-	pi.registerMessageRenderer(CUSTOM_TYPE, (message, _options, theme) => {
+	pi.registerMessageRenderer(CUSTOM_TYPE, (message, { outputPad }, theme) => {
 		const prompt =
 			typeof message.content === "string"
 				? message.content
@@ -28,7 +28,7 @@ export default function systemPromptCommandExtension(pi: ExtensionAPI) {
 						.filter((item) => item.type === "text")
 						.map((item) => item.text)
 						.join("");
-		return renderSystemPrompt(prompt, theme);
+		return renderSystemPrompt(prompt, theme, outputPad);
 	});
 
 	pi.on("context", async (event) => ({
