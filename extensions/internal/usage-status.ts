@@ -265,7 +265,7 @@ export async function refreshUsageAuthIfNeeded(
 			refresh: current.refresh,
 			expires: current.expires ?? 0,
 		};
-		const refreshed = await oauth.refresh(credentials);
+		const refreshed = await oauth.refresh(credentials, AbortSignal.timeout(REQUEST_TIMEOUT_MS));
 		const next: AuthData = {
 			...auth,
 			[provider]: {
