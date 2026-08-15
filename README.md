@@ -12,6 +12,13 @@ pi install git:https://github.com/chiwanpark/pi-enhanced
 
 - `search_web`: Searches the public web through the OpenAI Codex Search API and returns a concise summary with sources. It uses the `openai-codex` OAuth credentials stored by pi; run `/login openai-codex` before using it.
 
+## Commands
+
+- `/usage`: Shows the rolling limits (5h / weekly, or the provider equivalent) and the credit balance of every logged-in provider, together with the account each one belongs to. Model-scoped windows (e.g. Claude's per-model weekly limit) are listed as extra rows, and credit-metered plans (e.g. Codex Business/Enterprise workspaces, Claude extra usage) report a credits row instead of rolling windows.
+- `/status`: Shows the current model, directory, `AGENTS.md` files, account, session id, and the limits of the active provider.
+- `/system-prompt`: Shows the current effective system prompt.
+- `/plan`, `/harmful`: Toggle Plan Mode and harmful mode.
+
 ## Command Safety
 
 Bash tool calls are blocked when they:

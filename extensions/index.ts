@@ -14,6 +14,7 @@ import systemPromptCleanupExtension from "./system-prompt-cleanup";
 import systemPromptCommandExtension from "./system-prompt-command";
 import todoExtension from "./todo";
 import transcriptExtension from "./transcript";
+import usageCommandExtension from "./usage-command";
 import webSearchExtension from "./web-search";
 import welcomeExtension from "./welcome";
 
@@ -40,6 +41,7 @@ export default composeExtensions(
 	planModeExtension,
 	statusbarExtension,
 	statusCommandExtension,
+	usageCommandExtension,
 	systemPromptCommandExtension,
 	// Run last so no pi-enhanced prompt hook can append content after the cwd.
 	systemPromptCleanupExtension,
