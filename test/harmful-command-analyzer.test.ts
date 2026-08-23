@@ -76,7 +76,28 @@ test("allows Leash temporary, device, and platform paths", () => {
 	assertAllowed("rm ~/.pi/agent/cache.txt");
 	assertAllowed("touch ~/.claude/plans/plan.md");
 	assertAllowed("cp ./source.txt ~/.config/opencode/source.txt");
+});
+
+test("allows non-deleting operations on device paths", () => {
+	assertAllowed("touch /dev/null");
+	assertAllowed("chmod 666 /dev/null");
+	assertAllowed("chown root /dev/null");
+	assertAllowed("ln -sf /dev/null ./nested/nul");
+	assertAllowed("cp ./source.txt /dev/null");
+	assertAllowed("mv ./source.txt /dev/null");
+	assertAllowed("dd if=/dev/zero of=/dev/null");
+	assertAllowed("cat ./source.txt > /dev/stdout");
+});
+
+test("still blocks deleting device paths", () => {
 	assertBlocked("rm /dev/null");
+	assertBlocked("rm -f /dev/stdout");
+	assertBlocked("unlink /dev/null");
+	assertBlocked("shred /dev/null");
+	assertBlocked("rmdir /dev/null");
+	assertBlocked("mv /dev/null ./nested/moved");
+	assertBlocked("find /dev/null -delete", /find -delete/);
+	assertBlocked("echo /dev/null | xargs rm", /xargs/);
 });
 
 test("cp may read outside, but mv may not modify an outside source", () => {

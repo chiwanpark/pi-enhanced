@@ -32,7 +32,11 @@ type CopyMoveArguments = {
 	noTargetDirectory: boolean;
 };
 
-type PathPolicy = "modify" | "write";
+/**
+ * `delete` removes the target itself, so device paths stay blocked; `modify` and `write` only change
+ * content or metadata, which is a harmless no-op on device paths such as /dev/null.
+ */
+type PathPolicy = "delete" | "modify" | "write";
 
 const GUARDED_COMMANDS = new Set([
 	"rm",
@@ -50,6 +54,7 @@ const GUARDED_COMMANDS = new Set([
 	"dd",
 	"ln",
 ]);
+const DELETING_COMMANDS = new Set(["rm", "rmdir", "unlink", "shred"]);
 const TEMP_PATHS = ["/tmp", "/var/tmp", "/private/tmp", "/private/var/tmp"];
 const DEVICE_PATHS = ["/dev/null", "/dev/stdin", "/dev/stdout", "/dev/stderr"];
 const PLATFORM_PATHS = [".claude", ".factory", ".pi", ".config/opencode"];
@@ -660,11 +665,10 @@ export class HarmfulCommandAnalyzer {
 		const platformPaths = PLATFORM_PATHS.map((candidate) => this.resolveSymlinks(path.join(home, candidate), home));
 		if (platformPaths.some((candidate) => this.matchesRoot(resolved, candidate))) return true;
 
-		if (policy === "write") {
-			const devicePaths = DEVICE_PATHS.map((candidate) => this.resolveSymlinks(candidate, this.workingDirectory));
-			return devicePaths.some((candidate) => this.matchesRoot(resolved, candidate));
-		}
-		return false;
+		if (policy === "delete") return false;
+
+		const devicePaths = DEVICE_PATHS.map((candidate) => this.resolveSymlinks(candidate, this.workingDirectory));
+		return devicePaths.some((candidate) => this.matchesRoot(resolved, candidate));
 	}
 
 	private protectedName(relativePath: string, token: ShellToken): string | null {
@@ -780,7 +784,7 @@ export class HarmfulCommandAnalyzer {
 		}
 		if (command.name === "rsync" && values.includes("--delete")) name = "rsync --delete";
 		if (!name) return allowed();
-		return this.checkTargets(name, compoundPathCandidates(candidates), cwd);
+		return this.checkTargets(name, compoundPathCandidates(candidates), cwd, "delete");
 	}
 
 	private destinationIsDirectory(token: ShellToken, cwd: string, sourceCount: number): boolean {
@@ -808,7 +812,8 @@ export class HarmfulCommandAnalyzer {
 		if (!destination) return allowed();
 
 		if (command === "mv") {
-			const sourceResult = this.checkTargets(command, sources, cwd);
+			// Moving a source removes it from its original location, so treat it as a deletion.
+			const sourceResult = this.checkTargets(command, sources, cwd, "delete");
 			if (sourceResult.blocked) return sourceResult;
 		}
 		const destinationResult = this.checkTarget(command, destination, cwd, "write");
@@ -843,7 +848,8 @@ export class HarmfulCommandAnalyzer {
 			const output = ddOutputTarget(command.args);
 			return output ? this.checkTarget(command.name, output, cwd, "write") : allowed();
 		}
-		const policy: PathPolicy = command.name === "tee" ? "write" : "modify";
+		const policy: PathPolicy =
+			command.name === "tee" ? "write" : DELETING_COMMANDS.has(command.name) ? "delete" : "modify";
 		return this.checkTargets(command.name, collectSimpleOperands(command.args), cwd, policy);
 	}
 
