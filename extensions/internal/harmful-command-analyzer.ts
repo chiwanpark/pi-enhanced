@@ -7,6 +7,13 @@ export type CommandSafetyResult = {
 	reason?: string;
 };
 
+export type HarmfulCommandAnalyzerOptions = {
+	/** Extra roots that may be targeted even when they sit outside the working directory. */
+	allowPaths?: readonly string[];
+	/** Roots that must never be targeted, even inside the working directory or an allowed root. */
+	denyPaths?: readonly string[];
+};
+
 type Separator = "&&" | "||" | ";" | "|" | "newline";
 
 type CommandSegment = {
@@ -587,9 +594,25 @@ function checkDangerousGitCommand(command: ParsedCommand): CommandSafetyResult {
 
 export class HarmfulCommandAnalyzer {
 	private readonly workingDirectory: string;
+	private readonly allowedRoots: string[];
+	private readonly deniedRoots: string[];
 
-	constructor(workingDirectory: string) {
+	constructor(workingDirectory: string, options: HarmfulCommandAnalyzerOptions = {}) {
 		this.workingDirectory = this.resolveSymlinks(workingDirectory, process.cwd());
+		this.allowedRoots = this.configuredRoots(options.allowPaths);
+		this.deniedRoots = this.configuredRoots(options.denyPaths);
+	}
+
+	/** Resolve configured paths once, both lexically and through symlinks, relative to the working directory. */
+	private configuredRoots(paths: readonly string[] | undefined): string[] {
+		const roots = new Set<string>();
+		for (const candidate of paths ?? []) {
+			const trimmed = candidate.trim();
+			if (!trimmed) continue;
+			roots.add(path.resolve(this.workingDirectory, this.expandHome(trimmed)));
+			roots.add(this.resolveSymlinks(trimmed, this.workingDirectory));
+		}
+		return [...roots];
 	}
 
 	private expandHome(input: string): string {
@@ -657,6 +680,25 @@ export class HarmfulCommandAnalyzer {
 		return resolved === root || resolved.startsWith(`${root}${path.sep}`);
 	}
 
+	private matchesAllowedRoot(candidates: readonly string[]): boolean {
+		return this.allowedRoots.some((root) => candidates.some((candidate) => this.matchesRoot(candidate, root)));
+	}
+
+	/**
+	 * Denied roots also match ancestors and glob prefixes, because touching either can destroy the
+	 * denied path itself.
+	 */
+	private matchesDeniedRoot(candidates: readonly string[], token: ShellToken): boolean {
+		return this.deniedRoots.some((root) =>
+			candidates.some((candidate) => {
+				if (this.matchesRoot(candidate, root) || this.matchesRoot(root, candidate)) return true;
+				if (!token.hasGlob) return false;
+				const wildcard = candidate.search(/[*?[]/);
+				return wildcard >= 0 && root.startsWith(candidate.slice(0, wildcard));
+			}),
+		);
+	}
+
 	private isAllowedOutsidePath(resolved: string, policy: PathPolicy): boolean {
 		const tempPaths = TEMP_PATHS.map((candidate) => this.resolveSymlinks(candidate, this.workingDirectory));
 		if (tempPaths.some((candidate) => this.matchesRoot(resolved, candidate))) return true;
@@ -697,6 +739,15 @@ export class HarmfulCommandAnalyzer {
 		if (token.value === "" || token.value === "-") return allowed();
 
 		const lexical = path.resolve(cwd, this.expandHome(token.value));
+		const resolved = this.resolveSymlinks(token.value, cwd);
+		const candidates = [lexical, resolved];
+
+		// Configured paths win over every built-in rule: deny first, then allow.
+		if (this.matchesDeniedRoot(candidates, token)) {
+			return blocked(`Command "${command}" targets a denied path: ${token.value}`);
+		}
+		if (this.matchesAllowedRoot(candidates)) return allowed();
+
 		if (this.isInsideWorkingDirectory(lexical)) {
 			const protectedName = this.protectedName(path.relative(this.workingDirectory, lexical), token);
 			if (protectedName) {
@@ -704,7 +755,6 @@ export class HarmfulCommandAnalyzer {
 			}
 		}
 
-		const resolved = this.resolveSymlinks(token.value, cwd);
 		if (!this.isInsideWorkingDirectory(resolved)) {
 			if (this.isAllowedOutsidePath(resolved, policy)) return allowed();
 			return blocked(`Command "${command}" targets a path outside the working directory: ${token.value}`);

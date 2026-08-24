@@ -28,9 +28,9 @@ Bash tool calls are blocked when they:
 - Target protected project-root `.env` files (except `.env.example`) or the project-root `.git` directory.
 - Run destructive Git operations such as checkout/restore discards, hard/merge resets, forced pushes/cleaning, forced branch deletion, or stash drop/clear.
 
-The same path restrictions apply to `write` and `edit`. Temporary directories, device output paths, and agent platform directories (`~/.pi`, `~/.claude`, `~/.factory`, and `~/.config/opencode`) follow Leash's allow rules.
+Use `harmfulCommandGuard.allowPaths` and `harmfulCommandGuard.denyPaths` (see [Configuration](#configuration)) to extend or tighten these rules per project.
 
-The guard resolves symlinks (including existing symlink parents of new files), follows `cd` changes, and checks every command in `&&`, `||`, `;`, `|`, and newline chains. Run `/harmful` to toggle harmful mode and temporarily bypass all command, write, and edit checks for the current session branch; `/harmful on` and `/harmful off` set it explicitly.
+The guard resolves symlinks (including existing symlink parents of new files), follows `cd` changes, and checks every command in `&&`, `||`, `;`, `|`, and newline chains. Run `/harmful` to toggle harmful mode and temporarily bypass all command, write, and edit checks for the current session branch; `/harmful on` and `/harmful off` set it explicitly, and `/harmful paths` lists the configured path exceptions.
 
 ## Configuration
 
@@ -50,6 +50,9 @@ Project settings override global settings.
   - `warnBroadBash`: Warn on broad bash scans (`find`, `tree`, recursive `ls`, unscoped `rg`/`grep`) and broad `glob`, `grep`, or `ls` tool calls (default: true).
 - `planMode`: Configures plan mode behavior.
   - `blockedTools`: An array of tool names to block when Plan Mode is active (default: `["bash", "edit", "write"]`).
+- `harmfulCommandGuard`: Adds path exceptions to the command and file-operation safety checks. Entries may be absolute, `~`-prefixed, or relative to the project root, and the global and project lists are unioned instead of overridden.
+  - `allowPaths`: Roots that may be targeted even outside the working directory. An allowed root also overrides the built-in `.env`/`.git` protection and the device-path deletion rule.
+  - `denyPaths`: Roots that are never targetable, even inside the working directory or an allowed root. Deny wins over allow, and also covers ancestors and globs that could expand into the denied path.
 
 ### Example
 
@@ -64,6 +67,10 @@ Project settings override global settings.
     },
     "planMode": {
       "blockedTools": ["bash", "edit", "write"]
+    },
+    "harmfulCommandGuard": {
+      "allowPaths": ["~/scratch", "../sibling-repo"],
+      "denyPaths": ["./infra/production", "~/.ssh"]
     }
   }
 }

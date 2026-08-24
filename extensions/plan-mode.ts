@@ -1,41 +1,22 @@
-import { existsSync, readFileSync } from "node:fs";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { getGlobalPiSettingsPath, getProjectPiSettingsPath } from "./internal/common";
+import { readPiEnhancedSettings } from "./internal/common";
 import { PLAN_MODE_STATE_EVENT } from "./internal/plan-mode-state";
 
 const DEFAULT_BLOCKED_TOOLS = ["bash", "edit", "write"];
 
-type PiSettingsFile = {
-	piEnhanced?: {
-		planMode?: {
-			blockedTools?: unknown;
-		};
-	};
+type PlanModeSettings = {
+	blockedTools?: unknown;
 };
-
-function readSettingsFile(settingsPath: string): PiSettingsFile {
-	if (!existsSync(settingsPath)) return {};
-	try {
-		const parsed = JSON.parse(readFileSync(settingsPath, "utf8")) as unknown;
-		if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
-		return parsed as PiSettingsFile;
-	} catch {
-		return {};
-	}
-}
 
 function loadBlockedTools(cwd: string): Set<string> {
 	let blocked = [...DEFAULT_BLOCKED_TOOLS];
 
-	const apply = (settings: PiSettingsFile) => {
-		const tools = settings.piEnhanced?.planMode?.blockedTools;
+	for (const section of readPiEnhancedSettings(cwd)) {
+		const tools = (section as { planMode?: PlanModeSettings }).planMode?.blockedTools;
 		if (Array.isArray(tools)) {
-			blocked = tools.filter((t) => typeof t === "string");
+			blocked = tools.filter((tool): tool is string => typeof tool === "string");
 		}
-	};
-
-	apply(readSettingsFile(getGlobalPiSettingsPath()));
-	apply(readSettingsFile(getProjectPiSettingsPath(cwd)));
+	}
 
 	return new Set(blocked);
 }

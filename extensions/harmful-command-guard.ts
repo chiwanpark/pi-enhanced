@@ -1,7 +1,42 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { HarmfulCommandAnalyzer, type CommandSafetyResult } from "./internal/harmful-command-analyzer";
+import { readPiEnhancedSettings, withHomeTilde } from "./internal/common";
+import {
+	HarmfulCommandAnalyzer,
+	type CommandSafetyResult,
+	type HarmfulCommandAnalyzerOptions,
+} from "./internal/harmful-command-analyzer";
 
 const STATE_ENTRY_TYPE = "harmful-mode";
+
+type HarmfulCommandGuardSettings = {
+	allowPaths?: unknown;
+	denyPaths?: unknown;
+};
+
+function toPathList(value: unknown): string[] {
+	if (!Array.isArray(value)) return [];
+	return value.filter((entry): entry is string => typeof entry === "string" && entry.trim() !== "");
+}
+
+/**
+ * Collect `piEnhanced.harmfulCommandGuard.allowPaths` and `.denyPaths`. Global and project settings
+ * are unioned, so a project can extend but never drop a global entry.
+ */
+function loadPathOptions(cwd: string): Required<HarmfulCommandAnalyzerOptions> {
+	const allowPaths: string[] = [];
+	const denyPaths: string[] = [];
+	for (const section of readPiEnhancedSettings(cwd)) {
+		const guard = (section as { harmfulCommandGuard?: HarmfulCommandGuardSettings }).harmfulCommandGuard;
+		if (!guard) continue;
+		allowPaths.push(...toPathList(guard.allowPaths));
+		denyPaths.push(...toPathList(guard.denyPaths));
+	}
+	return { allowPaths: [...new Set(allowPaths)], denyPaths: [...new Set(denyPaths)] };
+}
+
+function formatPathList(paths: readonly string[]): string {
+	return paths.length === 0 ? "none" : paths.map((entry) => withHomeTilde(entry)).join(", ");
+}
 
 export default function harmfulCommandGuardExtension(pi: ExtensionAPI) {
 	function isHarmfulModeActive(ctx: ExtensionContext): boolean {
@@ -15,15 +50,24 @@ export default function harmfulCommandGuardExtension(pi: ExtensionAPI) {
 	}
 
 	pi.registerCommand("harmful", {
-		description: "Toggle harmful mode, which bypasses command and file-operation safety checks.",
+		description:
+			"Toggle harmful mode, which bypasses command and file-operation safety checks. Use /harmful paths to list configured path exceptions.",
 		handler: async (args, ctx) => {
 			const requested = args.trim().toLowerCase();
 			let active: boolean;
+			if (requested === "paths") {
+				const { allowPaths, denyPaths } = loadPathOptions(ctx.cwd);
+				ctx.ui.notify(
+					`Allowed paths: ${formatPathList(allowPaths)}\nDenied paths: ${formatPathList(denyPaths)}`,
+					"info",
+				);
+				return;
+			}
 			if (!requested) active = !isHarmfulModeActive(ctx);
 			else if (["on", "allow", "enable"].includes(requested)) active = true;
 			else if (["off", "block", "disable"].includes(requested)) active = false;
 			else {
-				ctx.ui.notify("Usage: /harmful [on|off]", "warning");
+				ctx.ui.notify("Usage: /harmful [on|off|paths]", "warning");
 				return;
 			}
 
@@ -39,7 +83,7 @@ export default function harmfulCommandGuardExtension(pi: ExtensionAPI) {
 
 	pi.on("tool_call", async (event, ctx) => {
 		if (isHarmfulModeActive(ctx)) return undefined;
-		const analyzer = new HarmfulCommandAnalyzer(ctx.cwd);
+		const analyzer = new HarmfulCommandAnalyzer(ctx.cwd, loadPathOptions(ctx.cwd));
 		let result: CommandSafetyResult;
 		let subject: string;
 

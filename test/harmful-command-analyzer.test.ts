@@ -27,6 +27,12 @@ function assertBlocked(command: string, reason?: RegExp): void {
 	if (reason) assert.match(result.reason ?? "", reason);
 }
 
+function assertBlockedBy(instance: HarmfulCommandAnalyzer, command: string, reason?: RegExp): void {
+	const result = instance.analyze(command);
+	assert.equal(result.blocked, true, `expected command to be blocked: ${command}`);
+	if (reason) assert.match(result.reason ?? "", reason);
+}
+
 function assertAllowed(command: string): void {
 	const result = analyzer.analyze(command);
 	assert.equal(result.blocked, false, `expected command to be allowed: ${command}\n${result.reason ?? ""}`);
@@ -223,4 +229,43 @@ test("blocks dynamically computed targets that cannot be resolved safely", () =>
 
 test("handles shell line continuations without turning absolute paths into relative paths", () => {
 	assertBlocked("rm \\\n" + outside("continued"));
+});
+
+test("allows configured allowPaths outside the working directory", () => {
+	const configured = new HarmfulCommandAnalyzer(workingDirectory, {
+		allowPaths: [outsideDirectory, "~/.pi-enhanced-allowed", "./.env.vault"],
+	});
+	assert.equal(configured.analyze(`rm -rf ${outside("directory")}`).blocked, false);
+	assert.equal(configured.analyze(`mv ./source.txt ${outside("moved.txt")}`).blocked, false);
+	assert.equal(configured.analyze("touch ~/.pi-enhanced-allowed/file.txt").blocked, false);
+	// An allow entry can also opt into deleting a device path.
+	assert.equal(configured.analyze("rm /dev/null").blocked, true);
+	assert.equal(
+		new HarmfulCommandAnalyzer(workingDirectory, { allowPaths: ["/dev/null"] }).analyze("rm /dev/null").blocked,
+		false,
+	);
+	assert.equal(configured.analyze("rm ./escape/inside-allowed-target").blocked, false);
+	// An explicit allow entry also overrides the built-in .env protection.
+	assert.equal(configured.analyze("rm ./.env.vault").blocked, false);
+	assert.equal(configured.validatePath(outside("written.txt")).blocked, false);
+	// Unrelated outside paths stay blocked.
+	assertBlockedPath(configured.validatePath(path.join(sandbox, "other", "file.txt")));
+});
+
+test("blocks configured denyPaths, including inside the working directory", () => {
+	const configured = new HarmfulCommandAnalyzer(workingDirectory, {
+		allowPaths: [outsideDirectory],
+		denyPaths: ["./nested", outside("directory"), "~/.pi-enhanced-denied"],
+	});
+	assertBlockedBy(configured, "rm ./nested/cache", /denied path/);
+	assertBlockedBy(configured, "tee nested/output.txt", /denied path/);
+	assertBlockedBy(configured, "echo data > ./nested/output.txt", /denied path/);
+	assertBlockedBy(configured, "touch ~/.pi-enhanced-denied/file.txt", /denied path/);
+	// deny wins over allow, and also covers ancestors and glob prefixes of the denied path.
+	assertBlockedBy(configured, `rm -rf ${outside("directory")}`, /denied path/);
+	assertBlockedBy(configured, "rm -rf .", /denied path/);
+	assertBlockedBy(configured, "rm -rf ./nes*", /denied path/);
+	assertBlockedPath(configured.validatePath("./nested/file.txt"));
+	assert.equal(configured.analyze("touch ./source.txt").blocked, false);
+	assert.equal(configured.validatePath("./other.txt").blocked, false);
 });

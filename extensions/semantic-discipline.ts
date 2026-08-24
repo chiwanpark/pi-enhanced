@@ -1,6 +1,5 @@
-import { existsSync, readFileSync } from "node:fs";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { getGlobalPiSettingsPath, getProjectPiSettingsPath } from "./internal/common";
+import { readPiEnhancedSettings } from "./internal/common";
 
 export type SemanticDisciplineMode = "off" | "warn" | "block";
 
@@ -11,15 +10,11 @@ type SemanticDisciplineConfig = {
 	warnBroadBash: boolean;
 };
 
-type PiSettingsFile = {
-	piEnhanced?: {
-		semanticDiscipline?: {
-			mode?: unknown;
-			warnLargeReadLines?: unknown;
-			warnUnboundedRead?: unknown;
-			warnBroadBash?: unknown;
-		};
-	};
+type SemanticDisciplineSettings = {
+	mode?: unknown;
+	warnLargeReadLines?: unknown;
+	warnUnboundedRead?: unknown;
+	warnBroadBash?: unknown;
 };
 
 type Finding = {
@@ -40,19 +35,10 @@ function notify(ctx: ExtensionContext, message: string, level: "info" | "warning
 	ctx.ui.notify(message, level);
 }
 
-function readSettingsFile(settingsPath: string): PiSettingsFile {
-	if (!existsSync(settingsPath)) return {};
-	try {
-		const parsed = JSON.parse(readFileSync(settingsPath, "utf8")) as unknown;
-		if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
-		return parsed as PiSettingsFile;
-	} catch {
-		return {};
-	}
-}
-
-function applySettings(config: SemanticDisciplineConfig, settings: PiSettingsFile): SemanticDisciplineConfig {
-	const semantic = settings.piEnhanced?.semanticDiscipline;
+function applySettings(
+	config: SemanticDisciplineConfig,
+	semantic: SemanticDisciplineSettings | undefined,
+): SemanticDisciplineConfig {
 	if (!semantic) return config;
 
 	const next = { ...config };
@@ -73,8 +59,9 @@ function applySettings(config: SemanticDisciplineConfig, settings: PiSettingsFil
 
 function loadConfig(cwd: string): SemanticDisciplineConfig {
 	let config = { ...DEFAULT_CONFIG };
-	config = applySettings(config, readSettingsFile(getGlobalPiSettingsPath()));
-	config = applySettings(config, readSettingsFile(getProjectPiSettingsPath(cwd)));
+	for (const section of readPiEnhancedSettings(cwd)) {
+		config = applySettings(config, (section as { semanticDiscipline?: SemanticDisciplineSettings }).semanticDiscipline);
+	}
 	return config;
 }
 

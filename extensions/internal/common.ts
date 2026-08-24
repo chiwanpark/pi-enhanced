@@ -31,6 +31,27 @@ export function getProjectPiSettingsPath(cwd: string): string {
 	return path.join(cwd, ".pi", "settings.json");
 }
 
+function readJsonObject(filePath: string): Record<string, unknown> | null {
+	try {
+		const parsed = JSON.parse(readFileSync(filePath, "utf8")) as unknown;
+		if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+		return parsed as Record<string, unknown>;
+	} catch {
+		return null;
+	}
+}
+
+/** Read the `piEnhanced` section of the global and project settings, in increasing precedence order. */
+export function readPiEnhancedSettings(cwd: string): Record<string, unknown>[] {
+	const sections: Record<string, unknown>[] = [];
+	for (const settingsPath of [getGlobalPiSettingsPath(), getProjectPiSettingsPath(cwd)]) {
+		const section = readJsonObject(settingsPath)?.["piEnhanced"];
+		if (!section || typeof section !== "object" || Array.isArray(section)) continue;
+		sections.push(section as Record<string, unknown>);
+	}
+	return sections;
+}
+
 export type DrawBoxOptions = {
 	indent?: string;
 	paddingX?: number;
