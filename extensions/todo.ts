@@ -1,8 +1,13 @@
 import { StringEnum, Type, type Static } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
+import { isPlanModeState, PLAN_MODE_PROMPT_GUIDELINES, PLAN_MODE_STATE_EVENT } from "./internal/plan-mode-state";
 
 const TODO_TOOL_NAME = "write_todos";
+
+const TODO_GUIDELINES = [
+	"Use `write_todos` for multi-step work. Send the complete list, keep one active item `in_progress`, and mark completed work promptly.",
+];
 
 const TodoStatus = StringEnum(["pending", "in_progress", "completed"] as const);
 const TodoPriority = StringEnum(["high", "medium", "low"] as const);
@@ -144,69 +149,76 @@ export default function todoExtension(pi: ExtensionAPI) {
 	pi.on("session_start", async (_event, ctx) => reconstructState(ctx));
 	pi.on("session_tree", async (_event, ctx) => reconstructState(ctx));
 
-	pi.registerTool({
-		name: TODO_TOOL_NAME,
-		label: "Write Todos",
-		description: "Replace the current TODO list with an updated TODO list.",
-		promptGuidelines: [
-			"Use `write_todos` for multi-step work. Send the complete list, keep one active item `in_progress`, and mark completed work promptly.",
-		],
-		parameters: WriteTodosParams,
-		executionMode: "sequential",
+	function registerTodoTool(planModeActive: boolean): void {
+		pi.registerTool({
+			name: TODO_TOOL_NAME,
+			label: "Write Todos",
+			description: "Replace the current TODO list with an updated TODO list.",
+			promptGuidelines: planModeActive ? [...TODO_GUIDELINES, ...PLAN_MODE_PROMPT_GUIDELINES] : TODO_GUIDELINES,
+			parameters: WriteTodosParams,
+			executionMode: "sequential",
 
-		async execute(_toolCallId, params) {
-			const normalized = normalizeTodos(params.todos, nextId);
-			todos = normalized.todos;
-			nextId = normalized.nextId;
+			async execute(_toolCallId, params) {
+				const normalized = normalizeTodos(params.todos, nextId);
+				todos = normalized.todos;
+				nextId = normalized.nextId;
 
-			return {
-				content: [{ type: "text", text: formatToolText(todos) }],
-				details: details(),
-			};
-		},
+				return {
+					content: [{ type: "text", text: formatToolText(todos) }],
+					details: details(),
+				};
+			},
 
-		renderCall(args, theme, _context) {
-			const count = args.todos.length;
-			const text = `${theme.fg("toolTitle", theme.bold("write_todos"))} ${theme.fg("muted", `${count} item${count === 1 ? "" : "s"}`)}`;
-			return new Text(text, 0, 0);
-		},
+			renderCall(args, theme, _context) {
+				const count = args.todos.length;
+				const text = `${theme.fg("toolTitle", theme.bold("write_todos"))} ${theme.fg("muted", `${count} item${count === 1 ? "" : "s"}`)}`;
+				return new Text(text, 0, 0);
+			},
 
-		renderResult(result, { expanded }, theme, _context) {
-			const toolDetails = result.details as TodoDetails | undefined;
-			if (!toolDetails) {
-				const text = result.content[0];
-				return new Text(text?.type === "text" ? text.text : "", 0, 0);
-			}
+			renderResult(result, { expanded }, theme, _context) {
+				const toolDetails = result.details as TodoDetails | undefined;
+				if (!toolDetails) {
+					const text = result.content[0];
+					return new Text(text?.type === "text" ? text.text : "", 0, 0);
+				}
 
-			const todoList = toolDetails.todos;
-			if (todoList.length === 0) {
-				return new Text(theme.fg("dim", "TODO list cleared"), 0, 0);
-			}
+				const todoList = toolDetails.todos;
+				if (todoList.length === 0) {
+					return new Text(theme.fg("dim", "TODO list cleared"), 0, 0);
+				}
 
-			const displayTodos = expanded ? todoList : todoList.slice(0, 6);
-			const lines = [
-				theme.fg(
-					"muted",
-					`${toolDetails.stats.completed}/${toolDetails.stats.total} TODOs completed (${toolDetails.stats.inProgress} in progress)`,
-				),
-			];
+				const displayTodos = expanded ? todoList : todoList.slice(0, 6);
+				const lines = [
+					theme.fg(
+						"muted",
+						`${toolDetails.stats.completed}/${toolDetails.stats.total} TODOs completed (${toolDetails.stats.inProgress} in progress)`,
+					),
+				];
 
-			for (const todo of displayTodos) {
-				const iconColor = todo.status === "completed" ? "success" : todo.status === "in_progress" ? "warning" : "dim";
-				const priorityColor = todo.priority === "high" ? "error" : todo.priority === "medium" ? "warning" : "dim";
-				const contentColor = todo.status === "completed" ? "dim" : "muted";
-				lines.push(
-					`${theme.fg(iconColor, statusIcon(todo.status))} ${theme.fg(priorityColor, todo.priority)} ${theme.fg(contentColor, todo.content)}`,
-				);
-			}
+				for (const todo of displayTodos) {
+					const iconColor = todo.status === "completed" ? "success" : todo.status === "in_progress" ? "warning" : "dim";
+					const priorityColor = todo.priority === "high" ? "error" : todo.priority === "medium" ? "warning" : "dim";
+					const contentColor = todo.status === "completed" ? "dim" : "muted";
+					lines.push(
+						`${theme.fg(iconColor, statusIcon(todo.status))} ${theme.fg(priorityColor, todo.priority)} ${theme.fg(contentColor, todo.content)}`,
+					);
+				}
 
-			if (!expanded && todoList.length > displayTodos.length) {
-				lines.push(theme.fg("dim", `… ${todoList.length - displayTodos.length} more`));
-			}
+				if (!expanded && todoList.length > displayTodos.length) {
+					lines.push(theme.fg("dim", `… ${todoList.length - displayTodos.length} more`));
+				}
 
-			return new Text(lines.join("\n"), 0, 0);
-		},
+				return new Text(lines.join("\n"), 0, 0);
+			},
+		});
+	}
+
+	pi.events.on(PLAN_MODE_STATE_EVENT, (value) => {
+		if (!isPlanModeState(value)) return;
+		registerTodoTool(value.active);
 	});
+
+	registerTodoTool(false);
 
 	pi.registerCommand("todo", {
 		description: "Print the current TODO list",

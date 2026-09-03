@@ -1,5 +1,6 @@
 import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 import { Box, Text } from "@earendil-works/pi-tui";
+import { cleanSystemPrompt } from "./internal/system-prompt";
 
 interface SystemPromptEntryData {
 	prompt: string;
@@ -43,7 +44,8 @@ export default function systemPromptCommandExtension(pi: ExtensionAPI) {
 				return;
 			}
 
-			const prompt = ctx.getSystemPrompt();
+			const options = ctx.getSystemPromptOptions();
+			const prompt = cleanSystemPrompt(ctx.getSystemPrompt(), options.cwd, Boolean(options.customPrompt));
 			// Custom messages emit RPC message events, unlike custom entries. Waiting
 			// avoids turning this display-only response into a steering message.
 			await ctx.waitForIdle();

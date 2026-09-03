@@ -14,7 +14,7 @@ export type HarmfulCommandAnalyzerOptions = {
 	denyPaths?: readonly string[];
 };
 
-type Separator = "&&" | "||" | ";" | "|" | "newline";
+type Separator = "&&" | "||" | ";" | "|" | "&" | "newline";
 
 type CommandSegment = {
 	command: string;
@@ -225,6 +225,8 @@ function splitCommandChain(command: string): CommandSegment[] {
 		if (char === "&" && next === "&") {
 			push("&&");
 			index++;
+		} else if (char === "&" && next !== ">" && source[index - 1] !== ">") {
+			push("&");
 		} else if (char === "|" && next === "|") {
 			push("||");
 			index++;
@@ -326,6 +328,10 @@ function shellTokens(command: string, cwd: string): ShellToken[] {
 			tokenStarted = true;
 			index = expanded.end;
 			continue;
+		}
+		if (!singleQuoted && (char === "<" || char === ">") && next === "(") {
+			dynamic = true;
+			tokenStarted = true;
 		}
 		if (!singleQuoted && !doubleQuoted && /[*?[]/.test(char)) hasGlob = true;
 		if (!singleQuoted && !doubleQuoted && /\s/.test(char)) {
@@ -588,6 +594,284 @@ function checkDangerousGitCommand(command: ParsedCommand): CommandSafetyResult {
 	}
 	if (subcommand.name === "stash" && (options[0] === "drop" || options[0] === "clear")) {
 		return blocked(`Dangerous git command blocked: "git stash ${options[0]}".`);
+	}
+	return allowed();
+}
+
+const READ_ONLY_COMMANDS = new Set([
+	"[",
+	"basename",
+	"cat",
+	"cd",
+	"column",
+	"comm",
+	"cmp",
+	"cut",
+	"df",
+	"diff",
+	"dirname",
+	"du",
+	"echo",
+	"false",
+	"file",
+	"fold",
+	"grep",
+	"groups",
+	"head",
+	"hexdump",
+	"id",
+	"jq",
+	"ls",
+	"md5sum",
+	"nl",
+	"od",
+	"paste",
+	"pgrep",
+	"printenv",
+	"printf",
+	"ps",
+	"pwd",
+	"readlink",
+	"realpath",
+	"sha1sum",
+	"sha256sum",
+	"sha512sum",
+	"strings",
+	"tac",
+	"tail",
+	"test",
+	"tr",
+	"true",
+	"uname",
+	"wc",
+	"whereis",
+	"which",
+	"whoami",
+	"zcat",
+	"zgrep",
+]);
+
+const READ_ONLY_GIT_SUBCOMMANDS = new Set([
+	"blame",
+	"cat-file",
+	"describe",
+	"diff",
+	"diff-files",
+	"diff-index",
+	"diff-tree",
+	"grep",
+	"help",
+	"log",
+	"ls-files",
+	"ls-tree",
+	"merge-base",
+	"name-rev",
+	"rev-list",
+	"rev-parse",
+	"shortlog",
+	"show",
+	"show-ref",
+	"status",
+	"version",
+]);
+
+function checkReadOnlyRedirects(command: string, cwd: string): CommandSafetyResult {
+	let singleQuoted = false;
+	let doubleQuoted = false;
+	for (let index = 0; index < command.length; index++) {
+		const char = command[index] ?? "";
+		const next = command[index + 1] ?? "";
+		if (char === "\\" && !singleQuoted) {
+			index++;
+			continue;
+		}
+		if (char === "'" && !doubleQuoted) {
+			singleQuoted = !singleQuoted;
+			continue;
+		}
+		if (char === '"' && !singleQuoted) {
+			doubleQuoted = !doubleQuoted;
+			continue;
+		}
+		if (singleQuoted || doubleQuoted || char !== ">") continue;
+
+		let cursor = index + (next === ">" ? 2 : 1);
+		if (command[cursor] === "|") cursor++;
+		while (/\s/.test(command[cursor] ?? "")) cursor++;
+		if (command[cursor] === "&") {
+			cursor++;
+			while (/\s/.test(command[cursor] ?? "")) cursor++;
+			if (/^[0-9-]$/.test(command[cursor] ?? "")) continue;
+		}
+		const target = shellTokens(command.slice(cursor), cwd)[0];
+		if (!target || target.dynamic) return blocked("Dynamic output redirection is not allowed in Plan Mode.");
+		if (["/dev/null", "/dev/stdout", "/dev/stderr"].includes(path.resolve(cwd, target.value))) continue;
+		return blocked(`Output redirection to "${target.value}" is not allowed in Plan Mode.`);
+	}
+	return allowed();
+}
+
+function checkReadOnlySed(args: ShellToken[]): CommandSafetyResult {
+	const scripts: string[] = [];
+	let hasExpression = false;
+	for (let index = 0; index < args.length; index++) {
+		const value = args[index]?.value ?? "";
+		if (value === "-i" || value.startsWith("-i") || value === "--in-place" || value.startsWith("--in-place=")) {
+			return blocked('Command "sed -i" is not allowed in Plan Mode.');
+		}
+		if (value === "-f" || value === "--file" || value.startsWith("--file=")) {
+			return blocked('Command "sed" with a script file is not allowed in Plan Mode.');
+		}
+		if (value === "-e" || value === "--expression") {
+			const script = args[index + 1]?.value;
+			if (!script) return blocked('Command "sed" has an invalid expression in Plan Mode.');
+			scripts.push(script);
+			hasExpression = true;
+			index++;
+			continue;
+		}
+		if (value.startsWith("--expression=")) {
+			scripts.push(value.slice("--expression=".length));
+			hasExpression = true;
+			continue;
+		}
+		if (!hasExpression && !value.startsWith("-")) {
+			scripts.push(value);
+			hasExpression = true;
+		}
+	}
+	if (scripts.length === 0 || scripts.some((script) => !/^\s*(?:\d+|\$)(?:\s*,\s*(?:\d+|\$))?\s*p\s*$/.test(script))) {
+		return blocked('Only bounded print expressions are allowed with "sed" in Plan Mode.');
+	}
+	return allowed();
+}
+
+function checkReadOnlyGit(command: ParsedCommand): CommandSafetyResult {
+	const subcommand = gitSubcommand(command.args);
+	if (!subcommand) {
+		return command.args.every((token) => token.value.startsWith("-"))
+			? allowed()
+			: blocked('Command "git" is not read-only in Plan Mode.');
+	}
+	if (!READ_ONLY_GIT_SUBCOMMANDS.has(subcommand.name)) {
+		return blocked(`Command "git ${subcommand.name}" is not allowed in Plan Mode.`);
+	}
+	if (
+		subcommand.args.some(
+			(token) =>
+				token.value === "--output" ||
+				token.value.startsWith("--output=") ||
+				token.value === "--ext-diff" ||
+				token.value === "--textconv",
+		)
+	) {
+		return blocked(`Command "git ${subcommand.name}" has a writable or executable option in Plan Mode.`);
+	}
+	return allowed();
+}
+
+function checkReadOnlyWrappers(tokens: ShellToken[]): CommandSafetyResult {
+	let index = 0;
+	while (index < tokens.length) {
+		const value = tokens[index]?.value ?? "";
+		if (CONTROL_WORDS.has(value) || value === "" || /^[A-Za-z_][A-Za-z0-9_]*=/.test(value)) {
+			index++;
+			continue;
+		}
+		break;
+	}
+
+	while (index < tokens.length) {
+		const name = path.basename(tokens[index]?.value.replace(/^[({]+/, "") ?? "");
+		const optionsWithValues = WRAPPER_OPTIONS_WITH_VALUES.get(name);
+		if (!optionsWithValues) break;
+		if (name === "sudo" || name === "nohup") {
+			return blocked(`Command wrapper "${name}" is not allowed in Plan Mode.`);
+		}
+
+		index++;
+		while (index < tokens.length) {
+			const option = tokens[index]?.value ?? "";
+			if (option === "--") {
+				index++;
+				break;
+			}
+			if (name === "env" && /^[A-Za-z_][A-Za-z0-9_]*=/.test(option)) {
+				index++;
+				continue;
+			}
+			if (!option.startsWith("-") || option === "-") break;
+			if (name === "time" && (option === "-o" || option.startsWith("-o") || option.startsWith("--output"))) {
+				return blocked('Command wrapper "time" has an output-file option in Plan Mode.');
+			}
+			index += optionConsumesNext(option, optionsWithValues) ? 2 : 1;
+		}
+	}
+	return allowed();
+}
+
+function checkReadOnlyCommand(command: ParsedCommand): CommandSafetyResult {
+	if (command.args.some((token) => token.dynamic)) {
+		return blocked(`Command "${command.name}" uses dynamic shell execution in Plan Mode.`);
+	}
+	const values = command.args.map((token) => token.value);
+	if (command.name === "git") return checkReadOnlyGit(command);
+	if (command.name === "sed") return checkReadOnlySed(command.args);
+	if (
+		command.name === "find" &&
+		values.some((value) => /^-(?:delete|exec|execdir|ok|okdir|fprint|fprint0|fprintf|fls)$/.test(value))
+	) {
+		return blocked('Command "find" has a writable or executable action in Plan Mode.');
+	}
+	if (
+		command.name === "fd" &&
+		values.some(
+			(value) =>
+				value === "-x" ||
+				value.startsWith("-x") ||
+				value === "-X" ||
+				value.startsWith("-X") ||
+				value.startsWith("--exec"),
+		)
+	) {
+		return blocked('Command "fd" has an executable action in Plan Mode.');
+	}
+	if (command.name === "rg" && values.some((value) => value === "--pre" || value.startsWith("--pre="))) {
+		return blocked('Command "rg --pre" is not allowed in Plan Mode.');
+	}
+	if (
+		command.name === "sort" &&
+		values.some(
+			(value) => value === "-o" || /^-o.+/.test(value) || value === "--output" || value.startsWith("--output="),
+		)
+	) {
+		return blocked('Command "sort" has an output-file option in Plan Mode.');
+	}
+	if (
+		command.name === "tree" &&
+		values.some(
+			(value) => value === "-o" || /^-o.+/.test(value) || value === "--output" || value.startsWith("--output="),
+		)
+	) {
+		return blocked('Command "tree" has an output-file option in Plan Mode.');
+	}
+	if (["find", "fd", "rg", "sort", "tree"].includes(command.name) || READ_ONLY_COMMANDS.has(command.name)) {
+		return allowed();
+	}
+	return blocked(`Command "${command.name}" is not allowed in Plan Mode.`);
+}
+
+export function analyzeReadOnlyShellCommand(command: string, cwd: string): CommandSafetyResult {
+	for (const segment of splitCommandChain(command)) {
+		const redirectResult = checkReadOnlyRedirects(segment.command, cwd);
+		if (redirectResult.blocked) return redirectResult;
+		const tokens = shellTokens(segment.command, cwd);
+		const wrapperResult = checkReadOnlyWrappers(tokens);
+		if (wrapperResult.blocked) return wrapperResult;
+		const parsed = unwrapCommand(tokens);
+		if (!parsed) return blocked("Unrecognized shell syntax is not allowed in Plan Mode.");
+		const result = checkReadOnlyCommand(parsed);
+		if (result.blocked) return result;
 	}
 	return allowed();
 }

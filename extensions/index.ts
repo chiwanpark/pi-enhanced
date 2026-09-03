@@ -1,9 +1,7 @@
 import type { ExtensionAPI, ExtensionFactory } from "@earendil-works/pi-coding-agent";
 
 import askUserExtension from "./ask-user";
-import conciseBuiltinsExtension from "./concise-builtins";
 import editorExtension from "./editor";
-import fileToolsExtension from "./file-tools";
 import harmfulCommandGuardExtension from "./harmful-command-guard";
 import patchThemeExtension from "./patch-theme";
 import planModeExtension from "./plan-mode";
@@ -29,7 +27,6 @@ function composeExtensions(...extensions: ExtensionFactory[]): ExtensionFactory 
 export default composeExtensions(
 	welcomeExtension,
 	patchThemeExtension,
-	conciseBuiltinsExtension,
 	transcriptExtension,
 	harmfulCommandGuardExtension,
 	semanticDisciplineExtension,
@@ -37,12 +34,11 @@ export default composeExtensions(
 	askUserExtension,
 	webSearchExtension,
 	editorExtension,
-	fileToolsExtension,
 	planModeExtension,
 	statusbarExtension,
 	statusCommandExtension,
 	usageCommandExtension,
 	systemPromptCommandExtension,
-	// Run last so no pi-enhanced prompt hook can append content after the cwd.
+	// Run last so no pi-enhanced prompt hook can append content after the cleanup.
 	systemPromptCleanupExtension,
 );

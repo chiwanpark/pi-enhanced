@@ -1,8 +1,9 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { readPiEnhancedSettings } from "./internal/common";
+import { analyzeReadOnlyShellCommand } from "./internal/harmful-command-analyzer";
 import { PLAN_MODE_STATE_EVENT } from "./internal/plan-mode-state";
 
-const DEFAULT_BLOCKED_TOOLS = ["bash", "edit", "write"];
+const DEFAULT_BLOCKED_TOOLS = ["edit", "write"];
 
 type PlanModeSettings = {
 	blockedTools?: unknown;
@@ -59,13 +60,24 @@ export default function planModeExtension(pi: ExtensionAPI) {
 	});
 
 	pi.on("tool_call", async (event, ctx) => {
+		if (!getActiveState(ctx)) return undefined;
+
 		const blockedTools = loadBlockedTools(ctx.cwd);
-		if (getActiveState(ctx) && blockedTools.has(event.toolName)) {
+		if (blockedTools.has(event.toolName)) {
 			return {
 				block: true,
 				reason: `Tool \`${event.toolName}\` is blocked in Plan Mode. Analyze the task and write a plan using \`write_todos\`.`,
 			};
 		}
-		return undefined;
+		if (event.toolName !== "bash") return undefined;
+
+		const command = typeof event.input.command === "string" ? event.input.command : "";
+		const result = analyzeReadOnlyShellCommand(command, ctx.cwd);
+		return result.blocked
+			? {
+					block: true,
+					reason: `${result.reason ?? "Writable bash command blocked in Plan Mode."} Use read-only inspection commands or run \`/plan\` to exit Plan Mode before implementation.`,
+				}
+			: undefined;
 	});
 }

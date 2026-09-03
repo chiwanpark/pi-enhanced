@@ -10,6 +10,7 @@ pi install git:https://github.com/chiwanpark/pi-enhanced
 
 ## Tools
 
+- `write_todos`, `ask_user`: TODO tracking for multi-step work, and a focused question prompt for the user.
 - `search_web`: Searches the public web through the OpenAI Codex Search API and returns a concise summary with sources. It uses the `openai-codex` OAuth credentials stored by pi; run `/login openai-codex` before using it.
 
 ## Commands
@@ -43,13 +44,11 @@ Project settings override global settings.
 
 ### Items
 
-- `semanticDiscipline`: Warns or blocks broad bash/file-tool scans and large/unbounded reads to encourage LSP/AST-first code navigation.
+- `semanticDiscipline`: Warns or blocks broad bash scans to keep file inspection scoped.
   - `mode`: `"off"`, `"warn"` (default), or `"block"`.
-  - `warnLargeReadLines`: Read line count that triggers discipline feedback (default: 400).
-  - `warnUnboundedRead`: Warn on reads without `limit` (default: true).
-  - `warnBroadBash`: Warn on broad bash scans (`find`, `tree`, recursive `ls`, unscoped `rg`/`grep`) and broad `glob`, `grep`, or `ls` tool calls (default: true).
-- `planMode`: Configures plan mode behavior.
-  - `blockedTools`: An array of tool names to block when Plan Mode is active (default: `["bash", "edit", "write"]`).
+  - `warnBroadBash`: Warn on broad bash scans such as `find`, `tree`, recursive `ls`, and unscoped `rg`/`grep` (default: true).
+- `planMode`: Configures plan mode behavior. Bash remains available for known read-only inspection commands; file writes, mutating commands, dynamic shell execution, and unknown commands are blocked.
+  - `blockedTools`: An array of tool names to block completely when Plan Mode is active (default: `["edit", "write"]`).
 - `harmfulCommandGuard`: Adds path exceptions to the command and file-operation safety checks. Entries may be absolute, `~`-prefixed, or relative to the project root, and the global and project lists are unioned instead of overridden.
   - `allowPaths`: Roots that may be targeted even outside the working directory. An allowed root also overrides the built-in `.env`/`.git` protection and the device-path deletion rule.
   - `denyPaths`: Roots that are never targetable, even inside the working directory or an allowed root. Deny wins over allow, and also covers ancestors and globs that could expand into the denied path.
@@ -61,12 +60,10 @@ Project settings override global settings.
   "piEnhanced": {
     "semanticDiscipline": {
       "mode": "warn",
-      "warnLargeReadLines": 400,
-      "warnUnboundedRead": true,
       "warnBroadBash": true
     },
     "planMode": {
-      "blockedTools": ["bash", "edit", "write"]
+      "blockedTools": ["edit", "write"]
     },
     "harmfulCommandGuard": {
       "allowPaths": ["~/scratch", "../sibling-repo"],
