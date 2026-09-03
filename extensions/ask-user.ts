@@ -3,6 +3,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 
 const ASK_USER_TOOL_NAME = "ask_user";
+const FREE_TEXT_CHOICE = "Write my own answer...";
 
 const AskUserMode = StringEnum(["input", "editor", "select", "confirm"] as const);
 
@@ -19,7 +20,8 @@ const AskUserParams = Type.Object({
 	),
 	choices: Type.Optional(
 		Type.Array(Type.String(), {
-			description: "Choices to present when mode is select. Keep labels short and unambiguous.",
+			description:
+				"Choices to present when mode is select. Keep labels short and unambiguous. Do not add a catch-all option; a free-text option is always appended.",
 		}),
 	),
 });
@@ -42,6 +44,11 @@ function resolveMode(params: AskUserInput): AskUserModeValue {
 	return "input";
 }
 
+function dialogTitle(question: string, context?: string): string {
+	const extra = context?.trim();
+	return extra ? `${question}\n\n${extra}` : question;
+}
+
 function resultText(details: AskUserDetails): string {
 	if (details.cancelled) return "The user did not provide an answer.";
 	if (details.mode === "confirm") return `User answered: ${details.answer === true ? "yes" : "no"}`;
@@ -55,6 +62,7 @@ export default function askUserExtension(pi: ExtensionAPI) {
 		description: "Ask the user a focused question and return their answer to the agent.",
 		promptGuidelines: [
 			"Use `ask_user` only when required information cannot be safely inferred. Explain the uncertainty and provide concise choices when useful.",
+			"Do not add an 'other'/'something else' choice; `ask_user` always appends a free-text option that opens a multi-line editor.",
 		],
 		parameters: AskUserParams,
 		executionMode: "sequential",
@@ -91,6 +99,7 @@ export default function askUserExtension(pi: ExtensionAPI) {
 			// TODO: Consider adding timeout and AbortSignal plumbing once ctx.ui dialog cancellation semantics are finalized.
 			// TODO: Consider recording unanswered questions in session state if the same prompt is asked repeatedly.
 			let answer: string | boolean | undefined;
+			const title = dialogTitle(params.question, params.context);
 			if (mode === "confirm") {
 				answer = await ctx.ui.confirm(params.question, params.context ?? "");
 			} else if (mode === "select") {
@@ -98,11 +107,17 @@ export default function askUserExtension(pi: ExtensionAPI) {
 				if (choices.length === 0) {
 					throw new Error("ask_user mode 'select' requires at least one choice.");
 				}
-				answer = await ctx.ui.select(params.question, choices);
+				const selected = await ctx.ui.select(title, [...choices, FREE_TEXT_CHOICE]);
+				if (selected === FREE_TEXT_CHOICE) {
+					const freeText = await ctx.ui.editor(title, "");
+					answer = freeText?.trim() ? freeText.trim() : undefined;
+				} else {
+					answer = selected;
+				}
 			} else if (mode === "editor") {
-				answer = await ctx.ui.editor(params.question, params.context ?? "");
+				answer = await ctx.ui.editor(title, "");
 			} else {
-				answer = await ctx.ui.input(params.question, params.context ?? "");
+				answer = await ctx.ui.input(title);
 			}
 
 			const details: AskUserDetails = {
