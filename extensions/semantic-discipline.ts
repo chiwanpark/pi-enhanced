@@ -130,6 +130,7 @@ function fingerprint(toolName: string, finding: Finding, detail: string): string
 
 export default function semanticDisciplineExtension(pi: ExtensionAPI) {
 	const notified = new Set<string>();
+	const pendingWarnings = new Map<string, string>();
 
 	pi.on("tool_call", async (event, ctx) => {
 		const config = loadConfig(ctx.cwd);
@@ -156,6 +157,21 @@ export default function semanticDisciplineExtension(pi: ExtensionAPI) {
 			return { block: true, reason: finding.reason };
 		}
 
+		pendingWarnings.set(event.toolCallId, finding.message);
 		return undefined;
+	});
+
+	pi.on("tool_result", async (event) => {
+		const warning = pendingWarnings.get(event.toolCallId);
+		if (!warning) return undefined;
+
+		pendingWarnings.delete(event.toolCallId);
+		return {
+			content: [...event.content, { type: "text", text: `Semantic discipline warning: ${warning}` }],
+		};
+	});
+
+	pi.on("tool_execution_end", async (event) => {
+		pendingWarnings.delete(event.toolCallId);
 	});
 }
