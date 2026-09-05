@@ -17,7 +17,7 @@ const CUSTOM_TOOLS_NOTE =
 
 export const HOUSE_GUIDELINES = [
 	"Start with narrow, targeted inspection and reuse prior findings. Avoid broad scans and generated directories unless needed.",
-	"Read files in bounded slices (for example `sed -n '1,120p' file`) instead of whole-file dumps, and scope `rg` and `find` with a path or glob.",
+	"Read bounded slices with `read` offset/limit instead of whole-file dumps, and scope bash `rg`/`find` with a path or glob.",
 	"After editing a file, re-read the changed region to confirm the edit landed as intended.",
 	"Write terminal-friendly responses: avoid Markdown headings; use **Title Case** section labels, short paragraphs, and flat bullets.",
 ];

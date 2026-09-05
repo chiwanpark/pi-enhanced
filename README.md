@@ -44,8 +44,10 @@ Project settings override global settings.
 
 ### Items
 
-- `semanticDiscipline`: Warns or blocks broad bash scans to keep file inspection scoped.
+- `semanticDiscipline`: Warns or blocks broad bash scans and large or unbounded `read` calls to keep file inspection scoped.
   - `mode`: `"off"`, `"warn"` (default), or `"block"`.
+  - `warnLargeReadLines`: `read` line count that triggers discipline feedback (default: 400).
+  - `warnUnboundedRead`: Warn on `read` calls without `limit` (default: true).
   - `warnBroadBash`: Warn on broad bash scans such as `find`, `tree`, recursive `ls`, and unscoped `rg`/`grep` (default: true).
 - `planMode`: Configures plan mode behavior. Bash remains available for known read-only inspection commands; file writes, mutating commands, dynamic shell execution, and unknown commands are blocked.
   - `blockedTools`: An array of tool names to block completely when Plan Mode is active (default: `["edit", "write"]`).
@@ -60,6 +62,8 @@ Project settings override global settings.
   "piEnhanced": {
     "semanticDiscipline": {
       "mode": "warn",
+      "warnLargeReadLines": 400,
+      "warnUnboundedRead": true,
       "warnBroadBash": true
     },
     "planMode": {

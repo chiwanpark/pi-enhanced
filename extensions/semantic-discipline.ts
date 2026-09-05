@@ -5,22 +5,28 @@ export type SemanticDisciplineMode = "off" | "warn" | "block";
 
 type SemanticDisciplineConfig = {
 	mode: SemanticDisciplineMode;
+	warnLargeReadLines: number;
+	warnUnboundedRead: boolean;
 	warnBroadBash: boolean;
 };
 
 type SemanticDisciplineSettings = {
 	mode?: unknown;
+	warnLargeReadLines?: unknown;
+	warnUnboundedRead?: unknown;
 	warnBroadBash?: unknown;
 };
 
 type Finding = {
-	kind: "broad-bash";
+	kind: "broad-bash" | "large-read";
 	message: string;
 	reason: string;
 };
 
 const DEFAULT_CONFIG: SemanticDisciplineConfig = {
 	mode: "warn",
+	warnLargeReadLines: 400,
+	warnUnboundedRead: true,
 	warnBroadBash: true,
 };
 
@@ -38,6 +44,12 @@ function applySettings(
 	const next = { ...config };
 	if (semantic.mode === "off" || semantic.mode === "warn" || semantic.mode === "block") {
 		next.mode = semantic.mode;
+	}
+	if (typeof semantic.warnLargeReadLines === "number" && Number.isFinite(semantic.warnLargeReadLines)) {
+		next.warnLargeReadLines = Math.max(1, Math.floor(semantic.warnLargeReadLines));
+	}
+	if (typeof semantic.warnUnboundedRead === "boolean") {
+		next.warnUnboundedRead = semantic.warnUnboundedRead;
 	}
 	if (typeof semantic.warnBroadBash === "boolean") {
 		next.warnBroadBash = semantic.warnBroadBash;
@@ -124,6 +136,27 @@ function inspectBash(command: string): Finding | null {
 	return null;
 }
 
+function inspectRead(path: string, limit: number | undefined, config: SemanticDisciplineConfig): Finding | null {
+	if (limit == null) {
+		if (!config.warnUnboundedRead) return null;
+		return {
+			kind: "large-read",
+			message: `Unbounded read of ${path}. Pass offset and limit to read a bounded slice.`,
+			reason: "Use offset/limit instead of unbounded reads.",
+		};
+	}
+
+	if (limit > config.warnLargeReadLines) {
+		return {
+			kind: "large-read",
+			message: `Large read requested (${limit} lines) for ${path}. Prefer smaller slices.`,
+			reason: `Read limit exceeds semanticDiscipline.warnLargeReadLines (${config.warnLargeReadLines}).`,
+		};
+	}
+
+	return null;
+}
+
 function fingerprint(toolName: string, finding: Finding, detail: string): string {
 	return `${toolName}:${finding.kind}:${finding.reason}:${detail.slice(0, 160)}`;
 }
@@ -143,6 +176,13 @@ export default function semanticDisciplineExtension(pi: ExtensionAPI) {
 			const command = typeof event.input.command === "string" ? event.input.command : "";
 			detail = command;
 			finding = inspectBash(command);
+		}
+
+		if (event.toolName === "read") {
+			const path = typeof event.input.path === "string" ? event.input.path : "<unknown>";
+			const limit = typeof event.input.limit === "number" ? event.input.limit : undefined;
+			detail = `${path}:${limit ?? "unbounded"}`;
+			finding = inspectRead(path, limit, config);
 		}
 
 		if (!finding) return undefined;
