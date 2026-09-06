@@ -66,7 +66,7 @@ export default function planModeExtension(pi: ExtensionAPI) {
 		if (blockedTools.has(event.toolName)) {
 			return {
 				block: true,
-				reason: `Tool \`${event.toolName}\` is blocked in Plan Mode. Analyze the task and write a plan using \`write_todos\`.`,
+				reason: `Tool \`${event.toolName}\` is blocked in Plan Mode. Analyze the task and write a plan using \`todo_write\`.`,
 			};
 		}
 		if (event.toolName !== "bash") return undefined;

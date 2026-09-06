@@ -10,7 +10,7 @@ pi install git:https://github.com/chiwanpark/pi-enhanced
 
 ## Tools
 
-- `write_todos`, `ask_user`: TODO tracking for multi-step work, and a focused question prompt for the user.
+- `todo_write`, `ask_user`: TODO tracking for multi-step work, and a focused question prompt for the user.
 - `search_web`: Searches the public web through the OpenAI Codex Search API and returns a concise summary with sources. It uses the `openai-codex` OAuth credentials stored by pi; run `/login openai-codex` before using it.
 
 ## Commands

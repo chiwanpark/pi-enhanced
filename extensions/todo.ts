@@ -3,20 +3,18 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { Text } from "@earendil-works/pi-tui";
 import { isPlanModeState, PLAN_MODE_PROMPT_GUIDELINES, PLAN_MODE_STATE_EVENT } from "./internal/plan-mode-state";
 
-const TODO_TOOL_NAME = "write_todos";
+const TODO_TOOL_NAME = "todo_write";
 
 const TODO_GUIDELINES = [
-	"Use `write_todos` for multi-step work. Send the complete list, keep one active item `in_progress`, and mark completed work promptly.",
+	"Use `todo_write` for multi-step work. Send the complete list, keep one active item `in_progress`, and mark completed work promptly.",
 ];
 
 const TodoStatus = StringEnum(["pending", "in_progress", "completed"] as const);
-const TodoPriority = StringEnum(["high", "medium", "low"] as const);
 
 const TodoItemSchema = Type.Object({
 	id: Type.Optional(Type.String({ description: "Stable unique ID for this TODO item" })),
 	content: Type.String({ description: "TODO item text" }),
 	status: TodoStatus,
-	priority: TodoPriority,
 });
 
 const WriteTodosParams = Type.Object({
@@ -29,13 +27,11 @@ type WriteTodosInput = Static<typeof WriteTodosParams>;
 type TodoInput = WriteTodosInput["todos"][number];
 
 type TodoStatusValue = "pending" | "in_progress" | "completed";
-type TodoPriorityValue = "high" | "medium" | "low";
 
 type TodoItem = {
 	id: string;
 	content: string;
 	status: TodoStatusValue;
-	priority: TodoPriorityValue;
 };
 
 type TodoDetails = {
@@ -100,7 +96,6 @@ function normalizeTodos(inputTodos: TodoInput[], previousNextId: number): { todo
 			id,
 			content,
 			status: input.status,
-			priority: input.priority,
 		});
 	}
 
@@ -113,7 +108,7 @@ function formatToolText(todos: TodoItem[]): string {
 	const stats = todoStats(todos);
 	const lines = [`${stats.completed}/${stats.total} TODOs completed`];
 	for (const todo of todos) {
-		lines.push(`[${statusIcon(todo.status)}] (${todo.priority}) ${todo.content}`);
+		lines.push(`[${statusIcon(todo.status)}] ${todo.content}`);
 	}
 	return lines.join("\n");
 }
@@ -171,7 +166,7 @@ export default function todoExtension(pi: ExtensionAPI) {
 
 			renderCall(args, theme, _context) {
 				const count = args.todos.length;
-				const text = `${theme.fg("toolTitle", theme.bold("write_todos"))} ${theme.fg("muted", `${count} item${count === 1 ? "" : "s"}`)}`;
+				const text = `${theme.fg("toolTitle", theme.bold(TODO_TOOL_NAME))} ${theme.fg("muted", `${count} item${count === 1 ? "" : "s"}`)}`;
 				return new Text(text, 0, 0);
 			},
 
@@ -197,11 +192,8 @@ export default function todoExtension(pi: ExtensionAPI) {
 
 				for (const todo of displayTodos) {
 					const iconColor = todo.status === "completed" ? "success" : todo.status === "in_progress" ? "warning" : "dim";
-					const priorityColor = todo.priority === "high" ? "error" : todo.priority === "medium" ? "warning" : "dim";
 					const contentColor = todo.status === "completed" ? "dim" : "muted";
-					lines.push(
-						`${theme.fg(iconColor, statusIcon(todo.status))} ${theme.fg(priorityColor, todo.priority)} ${theme.fg(contentColor, todo.content)}`,
-					);
+					lines.push(`${theme.fg(iconColor, statusIcon(todo.status))} ${theme.fg(contentColor, todo.content)}`);
 				}
 
 				if (!expanded && todoList.length > displayTodos.length) {
@@ -249,10 +241,9 @@ export default function todoExtension(pi: ExtensionAPI) {
 		];
 		for (const todo of toolDetails.todos) {
 			const iconColor = todo.status === "completed" ? "success" : todo.status === "in_progress" ? "warning" : "dim";
-			const priorityColor = todo.priority === "high" ? "error" : todo.priority === "medium" ? "warning" : "dim";
 			const contentColor = todo.status === "completed" ? "dim" : "text";
 			lines.push(
-				`${theme.fg(iconColor, statusIcon(todo.status))} ${theme.fg("accent", todo.id)} ${theme.fg(priorityColor, todo.priority)} ${theme.fg(contentColor, todo.content)}`,
+				`${theme.fg(iconColor, statusIcon(todo.status))} ${theme.fg("accent", todo.id)} ${theme.fg(contentColor, todo.content)}`,
 			);
 		}
 
