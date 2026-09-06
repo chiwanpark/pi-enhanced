@@ -1,12 +1,13 @@
 allowBuilds:
   "@google/genai": true
+  esbuild: true
   koffi: true
   protobufjs: true
 minimumReleaseAgeExclude:
-  - '@earendil-works/pi-agent-core@0.82.1 || 0.84.0'
-  - '@earendil-works/pi-ai@0.82.1 || 0.84.0'
-  - '@earendil-works/pi-coding-agent@0.82.1 || 0.84.0'
-  - '@earendil-works/pi-tui@0.82.1 || 0.84.0'
-  - '@earendil-works/pi-client@0.84.0'
-  - '@earendil-works/pi-protocol@0.84.0'
-  - '@earendil-works/pi-telemetry@0.84.0'
+  - '@earendil-works/pi-agent-core@0.82.1 || 0.85.1'
+  - '@earendil-works/pi-ai@0.82.1 || 0.85.1'
+  - '@earendil-works/pi-coding-agent@0.82.1 || 0.85.1'
+  - '@earendil-works/pi-tui@0.82.1 || 0.85.1'
+  - '@earendil-works/pi-client@0.85.1'
+  - '@earendil-works/pi-protocol@0.85.1'
+  - '@earendil-works/pi-telemetry@0.85.1'
