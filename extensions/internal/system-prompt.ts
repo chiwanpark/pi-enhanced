@@ -77,6 +77,61 @@ export function insertGuidelines(systemPrompt: string, guidelines: readonly stri
 	return bullets ? systemPrompt.slice(0, insertAt) + bullets + systemPrompt.slice(insertAt) : systemPrompt;
 }
 
+const GUIDELINE_REWRITES: readonly { readonly match: RegExp; readonly replace: string }[] = [
+	{
+		match: /^Use bash for file operations like ls, rg, find\.?$/,
+		replace: "Use `bash` for file operations like `ls`, `rg`, `find`.",
+	},
+	{
+		match: /^Use read to examine files instead of cat or sed\.?$/,
+		replace: "Use `read` to examine files instead of `cat` or `sed`.",
+	},
+	{
+		match: /^Use write only for new files or complete rewrites\.?$/,
+		replace: "Use `write` only for new files or complete rewrites.",
+	},
+	{
+		match: /^(You can inspect|Inspect) PI_\* environment variables for current model and session details\.?$/,
+		replace: "$1 `PI_*` environment variables for current model and session details.",
+	},
+	{ match: /^Be concise in your responses$/, replace: "Be concise in your responses." },
+	{
+		match: /^Show file paths clearly when working with files$/,
+		replace: "Show file paths clearly when working with files.",
+	},
+];
+
+function rewriteGuideline(guideline: string): string {
+	for (const rule of GUIDELINE_REWRITES) {
+		if (rule.match.test(guideline)) return guideline.replace(rule.match, rule.replace);
+	}
+	return guideline;
+}
+
+export function polishGuidelines(systemPrompt: string): string {
+	const header = systemPrompt.indexOf(GUIDELINES_HEADER);
+	if (header < 0) return systemPrompt;
+
+	const start = header + GUIDELINES_HEADER.length;
+	const bullets: string[] = [];
+	let cursor = start;
+	while (systemPrompt.startsWith("- ", cursor)) {
+		const lineEnd = systemPrompt.indexOf("\n", cursor);
+		const end = lineEnd < 0 ? systemPrompt.length : lineEnd;
+		bullets.push(systemPrompt.slice(cursor + 2, end));
+		cursor = lineEnd < 0 ? end : end + 1;
+		if (lineEnd < 0) break;
+	}
+	if (bullets.length === 0) return systemPrompt;
+
+	const rewritten = bullets.map(rewriteGuideline);
+	if (rewritten.every((bullet, index) => bullet === bullets[index])) return systemPrompt;
+
+	const trailingNewline = systemPrompt[cursor - 1] === "\n";
+	const body = rewritten.map((bullet) => `- ${bullet}`).join("\n") + (trailingNewline ? "\n" : "");
+	return systemPrompt.slice(0, start) + body + systemPrompt.slice(cursor);
+}
+
 export function removeProjectContextIntroduction(systemPrompt: string): string {
 	const open = systemPrompt.indexOf(PROJECT_CONTEXT_OPEN);
 	if (open < 0) return systemPrompt;
@@ -165,6 +220,7 @@ export function cleanSystemPrompt(systemPrompt: string, cwd: string, hasCustomPr
 	}
 
 	cleaned = insertGuidelines(cleaned, HOUSE_GUIDELINES);
+	cleaned = polishGuidelines(cleaned);
 	cleaned = removeProjectContextIntroduction(cleaned);
 	cleaned = renameProjectInstructionElements(cleaned);
 	cleaned = wrapProjectInstructionsInCdata(cleaned);

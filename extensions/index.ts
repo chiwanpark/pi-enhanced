@@ -3,6 +3,7 @@ import type { ExtensionAPI, ExtensionFactory } from "@earendil-works/pi-coding-a
 import askUserExtension from "./ask-user";
 import editorExtension from "./editor";
 import harmfulCommandGuardExtension from "./harmful-command-guard";
+import hashlineExtension from "./hashline";
 import patchThemeExtension from "./patch-theme";
 import planModeExtension from "./plan-mode";
 import statusCommandExtension from "./status-command";
@@ -31,6 +32,7 @@ export default composeExtensions(
 	harmfulCommandGuardExtension,
 	semanticDisciplineExtension,
 	todoExtension,
+	hashlineExtension,
 	askUserExtension,
 	webSearchExtension,
 	editorExtension,

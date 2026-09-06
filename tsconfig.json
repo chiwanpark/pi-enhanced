@@ -5,6 +5,8 @@
     "lib": ["esnext"],
     "types": ["node"],
     "allowJs": false,
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
     "sourceMap": true,
     "declaration": true,
     "declarationMap": true,

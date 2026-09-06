@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { cleanSystemPrompt, HOUSE_GUIDELINES } from "../extensions/internal/system-prompt.ts";
+import { cleanSystemPrompt, HOUSE_GUIDELINES, polishGuidelines } from "../extensions/internal/system-prompt.ts";
 
 const CWD = "/workspace/project";
 
@@ -40,6 +40,52 @@ test("cleanSystemPrompt strips the default sections and adds the house guideline
 	for (const guideline of HOUSE_GUIDELINES) {
 		assert.ok(cleaned.includes(`- ${guideline}`));
 	}
+});
+
+test("polishGuidelines backticks tool names and terminates sentences", () => {
+	const prompt = [
+		"Guidelines:",
+		"- Use bash for file operations like ls, rg, find",
+		"- Use read to examine files instead of cat or sed.",
+		"- Use write only for new files or complete rewrites.",
+		"- You can inspect PI_* environment variables for current model and session details.",
+		"- Be concise in your responses",
+		"- Show file paths clearly when working with files",
+		"",
+		"Trailing section",
+	].join("\n");
+
+	const polished = polishGuidelines(`\n\n${prompt}`);
+
+	assert.ok(polished.includes("- Use `bash` for file operations like `ls`, `rg`, `find`."));
+	assert.ok(polished.includes("- Use `read` to examine files instead of `cat` or `sed`."));
+	assert.ok(polished.includes("- Use `write` only for new files or complete rewrites."));
+	assert.ok(polished.includes("- You can inspect `PI_*` environment variables for current model and session details."));
+	assert.ok(polished.includes("- Be concise in your responses."));
+	assert.ok(polished.includes("- Show file paths clearly when working with files."));
+	assert.ok(polished.endsWith("\nTrailing section"));
+});
+
+test("polishGuidelines keeps the bare Inspect wording used by the bash tool", () => {
+	const polished = polishGuidelines(
+		"\n\nGuidelines:\n- Inspect PI_* environment variables for current model and session details.\n",
+	);
+
+	assert.ok(polished.includes("- Inspect `PI_*` environment variables for current model and session details."));
+});
+
+test("polishGuidelines leaves unknown guidelines untouched", () => {
+	const prompt = "\n\nGuidelines:\n- Something else entirely\n";
+
+	assert.equal(polishGuidelines(prompt), prompt);
+});
+
+test("cleanSystemPrompt polishes the generated guidelines", () => {
+	const cleaned = cleanSystemPrompt(BASE_PROMPT, CWD);
+
+	assert.ok(cleaned.includes("- Use `bash` for file operations like `ls`, `rg`, `find`."));
+	assert.ok(cleaned.includes("- Be concise in your responses."));
+	assert.ok(!cleaned.includes("- Use bash for file operations like ls, rg, find\n"));
 });
 
 test("cleanSystemPrompt moves the current directory into the project context", () => {
