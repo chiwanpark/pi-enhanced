@@ -1,6 +1,7 @@
 import type { ExtensionAPI, ExtensionFactory } from "@earendil-works/pi-coding-agent";
 
 import askUserExtension from "./ask-user";
+import commentGuardExtension from "./comment-guard";
 import editorExtension from "./editor";
 import harmfulCommandGuardExtension from "./harmful-command-guard";
 import hashlineExtension from "./hashline";
@@ -31,6 +32,7 @@ export default composeExtensions(
 	patchThemeExtension,
 	transcriptExtension,
 	harmfulCommandGuardExtension,
+	commentGuardExtension,
 	semanticDisciplineExtension,
 	todoExtension,
 	hashlineExtension,

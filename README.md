@@ -18,7 +18,7 @@ pi install git:https://github.com/chiwanpark/pi-enhanced
 - `/usage`: Shows the rolling limits (5h / weekly, or the provider equivalent) and the credit balance of every logged-in provider, together with the account each one belongs to. Model-scoped windows (e.g. Claude's per-model weekly limit) are listed as extra rows, and credit-metered plans (e.g. Codex Business/Enterprise workspaces, Claude extra usage) report a credits row instead of rolling windows.
 - `/status`: Shows the current model, directory, `AGENTS.md` files, account, session id, and the limits of the active provider.
 - `/system-prompt`: Shows the current effective system prompt.
-- `/plan`, `/harmful`: Toggle Plan Mode and harmful mode.
+- `/plan`, `/harmful`, `/comments`: Toggle Plan Mode, harmful mode, and the comment guard.
 
 ## Command Safety
 
@@ -32,6 +32,17 @@ Bash tool calls are blocked when they:
 Use `harmfulCommandGuard.allowPaths` and `harmfulCommandGuard.denyPaths` (see [Configuration](#configuration)) to extend or tighten these rules per project.
 
 The guard resolves symlinks (including existing symlink parents of new files), follows `cd` changes, and checks every command in `&&`, `||`, `;`, `|`, and newline chains. Run `/harmful` to toggle harmful mode and temporarily bypass all command, write, and edit checks for the current session branch; `/harmful on` and `/harmful off` set it explicitly, and `/harmful paths` lists the configured path exceptions.
+
+## Comment Guard
+
+`write` and `edit` calls are blocked when they add comments, so generated code stays free of narration that the user never asked for.
+
+- Comments are detected per language: `//` and `/* */`, `#`, `--`, `--[[ ]]`, `<!-- -->`, and Python docstrings. Markers inside strings, template literals, escapes, and `${var#pattern}`-style shell expansions are ignored, and unknown file types (`.json`, `.txt`, ...) are skipped.
+- Only new comments count. A comment that already exists somewhere in the file may be moved or re-indented, and `edit` only inspects the lines it inserts.
+- Tooling directives stay allowed: shebangs, `eslint-disable`, `@ts-expect-error`, `prettier-ignore`, `biome-ignore`, `noqa`, `type:`, `go:build`, `SPDX-License-Identifier`, `region`, and similar pragmas.
+- While the guard is active it adds a matching system prompt guideline, so the model knows the rule before it writes instead of learning it from a rejection.
+
+Use `commentGuard` (see [Configuration](#configuration)) to switch to `warn` or `off`, add allow patterns, or skip paths. Run `/comments` to allow comments for the current session branch when the user asks for them; `/comments on` and `/comments off` set it explicitly.
 
 ## OpenTelemetry Exporter
 
@@ -102,6 +113,11 @@ Project settings override global settings.
   - `warnLargeReadLines`: `read` line count that triggers discipline feedback (default: 400).
   - `warnUnboundedRead`: Warn on `read` calls without `limit` (default: true).
   - `warnBroadBash`: Warn on broad bash scans such as `find`, `tree`, recursive `ls`, and unscoped `rg`/`grep` (default: true).
+- `commentGuard`: Blocks or warns when `write` and `edit` add comments. Global and project lists are unioned instead of overridden.
+  - `mode`: `"off"`, `"warn"`, or `"block"` (default).
+  - `allowDirectives`: Allow tooling directives such as shebangs, `eslint-disable`, `@ts-expect-error`, and `noqa` (default: true).
+  - `allowPatterns`: Extra regular expressions, matched against the comment text, that stay allowed.
+  - `ignorePaths`: Project-relative or absolute paths whose files are never checked.
 - `planMode`: Configures plan mode behavior. Bash remains available for known read-only inspection commands; file writes, mutating commands, dynamic shell execution, and unknown commands are blocked.
   - `blockedTools`: An array of tool names to block completely when Plan Mode is active (default: `["edit", "write"]`).
 - `harmfulCommandGuard`: Adds path exceptions to the command and file-operation safety checks. Entries may be absolute, `~`-prefixed, or relative to the project root, and the global and project lists are unioned instead of overridden.
@@ -148,6 +164,12 @@ Project settings override global settings.
       "warnLargeReadLines": 400,
       "warnUnboundedRead": true,
       "warnBroadBash": true
+    },
+    "commentGuard": {
+      "mode": "block",
+      "allowDirectives": true,
+      "allowPatterns": ["^// SAFETY:"],
+      "ignorePaths": ["docs", "examples"]
     },
     "planMode": {
       "blockedTools": ["edit", "write"]
