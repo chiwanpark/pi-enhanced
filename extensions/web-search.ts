@@ -11,13 +11,17 @@ import {
 	truncateHead,
 	type ExtensionAPI,
 } from "@earendil-works/pi-coding-agent";
+import { readPiEnhancedSettings } from "./internal/common";
 import { readUsageAuth, refreshUsageAuthIfNeeded } from "./internal/usage-status";
 
-export const DEFAULT_SEARCH_MODEL = "gpt-5.4-mini";
+export const DEFAULT_SEARCH_MODEL = "gpt-5.6-luna";
 export const DEFAULT_MAX_SOURCES = 5;
 export const MAX_ALLOWED_SOURCES = 10;
 export const DEFAULT_SEARCH_TIMEOUT_MS = 120_000;
 export const DEFAULT_SEARCH_ENDPOINT = "https://chatgpt.com/backend-api/codex/responses";
+export const SEARCH_REASONING_EFFORTS = ["none", "low", "medium", "high", "xhigh", "max"] as const;
+
+export type SearchReasoningEffort = (typeof SEARCH_REASONING_EFFORTS)[number];
 
 const searchWebSchema = Type.Object({
 	query: Type.String({ description: "What to search for on the web" }),
@@ -57,6 +61,7 @@ export interface SearchWebToolConfig {
 	timeoutMs?: number;
 	endpoint?: string;
 	maxAllowedSources?: number;
+	reasoningEffort?: SearchReasoningEffort;
 }
 
 export interface SearchWebToolOptions extends SearchWebToolConfig {
@@ -106,6 +111,7 @@ export function createSearchWebTool(
 	const timeoutMs = normalizePositiveInteger(options.timeoutMs, DEFAULT_SEARCH_TIMEOUT_MS);
 	const model = options.model?.trim() || DEFAULT_SEARCH_MODEL;
 	const endpoint = options.endpoint?.trim() || DEFAULT_SEARCH_ENDPOINT;
+	const reasoningEffort = options.reasoningEffort;
 
 	return {
 		name: "search_web",
@@ -146,6 +152,7 @@ export function createSearchWebTool(
 						tools: [{ type: "web_search" }],
 						store: false,
 						stream: true,
+						...(reasoningEffort ? { reasoning: { effort: reasoningEffort, summary: "auto" } } : {}),
 					}),
 					signal: controller.signal,
 				});
@@ -364,9 +371,56 @@ function normalizePositiveInteger(value: number | undefined, fallback: number): 
 	return Math.max(1, Math.floor(value));
 }
 
+type WebSearchSettings = {
+	model?: unknown;
+	maxSources?: unknown;
+	timeoutMs?: unknown;
+	endpoint?: unknown;
+	maxAllowedSources?: unknown;
+	reasoningEffort?: unknown;
+};
+
+function isSearchReasoningEffort(value: unknown): value is SearchReasoningEffort {
+	return SEARCH_REASONING_EFFORTS.includes(value as SearchReasoningEffort);
+}
+
+function applySettings(config: SearchWebToolConfig, webSearch: WebSearchSettings | undefined): SearchWebToolConfig {
+	if (!webSearch) return config;
+
+	const next = { ...config };
+	if (typeof webSearch.model === "string" && webSearch.model.trim().length > 0) {
+		next.model = webSearch.model.trim();
+	}
+	if (typeof webSearch.endpoint === "string" && webSearch.endpoint.trim().length > 0) {
+		next.endpoint = webSearch.endpoint.trim();
+	}
+	if (typeof webSearch.maxSources === "number" && Number.isFinite(webSearch.maxSources)) {
+		next.maxSources = Math.max(1, Math.floor(webSearch.maxSources));
+	}
+	if (typeof webSearch.maxAllowedSources === "number" && Number.isFinite(webSearch.maxAllowedSources)) {
+		next.maxAllowedSources = Math.max(1, Math.floor(webSearch.maxAllowedSources));
+	}
+	if (typeof webSearch.timeoutMs === "number" && Number.isFinite(webSearch.timeoutMs)) {
+		next.timeoutMs = Math.max(1, Math.floor(webSearch.timeoutMs));
+	}
+	if (isSearchReasoningEffort(webSearch.reasoningEffort)) {
+		next.reasoningEffort = webSearch.reasoningEffort;
+	}
+	return next;
+}
+
+export function loadSearchWebConfig(cwd: string): SearchWebToolConfig {
+	let config: SearchWebToolConfig = {};
+	for (const section of readPiEnhancedSettings(cwd)) {
+		config = applySettings(config, (section as { webSearch?: WebSearchSettings }).webSearch);
+	}
+	return config;
+}
+
 export default function webSearchExtension(pi: ExtensionAPI) {
 	pi.registerTool(
 		createSearchWebTool({
+			...loadSearchWebConfig(process.cwd()),
 			getAuth: getOpenAICodexAuth,
 		}),
 	);

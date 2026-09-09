@@ -54,6 +54,13 @@ Project settings override global settings.
 - `harmfulCommandGuard`: Adds path exceptions to the command and file-operation safety checks. Entries may be absolute, `~`-prefixed, or relative to the project root, and the global and project lists are unioned instead of overridden.
   - `allowPaths`: Roots that may be targeted even outside the working directory. An allowed root also overrides the built-in `.env`/`.git` protection and the device-path deletion rule.
   - `denyPaths`: Roots that are never targetable, even inside the working directory or an allowed root. Deny wins over allow, and also covers ancestors and globs that could expand into the denied path.
+- `webSearch`: Configures the `search_web` tool.
+  - `model`: The OpenAI model used for the search request (default: `"gpt-5.6-luna"`).
+  - `maxSources`: Default number of sources returned when the tool call omits `maxSources` (default: 5).
+  - `maxAllowedSources`: Upper bound on the sources a single call may request (default: 10).
+  - `timeoutMs`: Request timeout in milliseconds (default: 120000).
+  - `endpoint`: Search API endpoint (default: `"https://chatgpt.com/backend-api/codex/responses"`).
+  - `reasoningEffort`: Reasoning effort sent with the search request: `"none"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, or `"max"`. Unset leaves the effort to the provider default.
 
 ### Example
 
@@ -72,6 +79,12 @@ Project settings override global settings.
     "harmfulCommandGuard": {
       "allowPaths": ["~/scratch", "../sibling-repo"],
       "denyPaths": ["./infra/production", "~/.ssh"]
+    },
+    "webSearch": {
+      "model": "gpt-5.6-luna",
+      "reasoningEffort": "low",
+      "maxSources": 5,
+      "timeoutMs": 120000
     }
   }
 }
