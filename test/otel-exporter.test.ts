@@ -414,6 +414,45 @@ test("disabled signals stop their exports", async () => {
 	assert.ok(eventNames.includes("claude_code.api_request"));
 });
 
+test("the otel command reports the destination and the export state", async () => {
+	const { server, port, captures } = await startCollector();
+	const config = metricsOnlyConfig(port);
+
+	const { pi, fire, commands } = fakePi();
+	createOtelExporter(config)(pi as never);
+	const notices: { message: string; level: string }[] = [];
+	const ctx = fakeCtx([], { id: "claude-sonnet-5", provider: "anthropic" }, notices);
+
+	const command = commands.get("otel");
+	assert.ok(command, "expected an /otel command");
+	await command.handler("", ctx);
+	assert.match(notices[0]?.message ?? "", /enabled: yes/);
+	assert.match(notices[0]?.message ?? "", new RegExp(`metrics endpoint: http://127.0.0.1:${port}/v1/metrics`));
+	assert.match(notices[0]?.message ?? "", /exporting this session: not yet/);
+	assert.equal(notices[0]?.level, "info");
+
+	// After a session has exported something the command says so.
+	await fire("session_start", { reason: "startup" }, ctx);
+	await command.handler("", ctx);
+	assert.match(notices[1]?.message ?? "", /exporting this session: yes/);
+
+	await fire("session_shutdown", { reason: "quit" }, ctx);
+	await new Promise<void>((resolve) => server.close(() => resolve()));
+	assert.ok(captures.length >= 0);
+});
+
+test("the otel command explains a disabled exporter", async () => {
+	const config = buildOtelConfig({}, []);
+	const { pi, commands } = fakePi();
+	createOtelExporter(config)(pi as never);
+	const notices: { message: string; level: string }[] = [];
+
+	await commands.get("otel")?.handler("", fakeCtx([], undefined, notices));
+	assert.match(notices[0]?.message ?? "", /enabled: no/);
+	assert.match(notices[0]?.message ?? "", /inactive: set piEnhanced.otelExporter.enabled/);
+	assert.equal(notices[0]?.level, "warning");
+});
+
 test("lines of code are measured from the real file change", async () => {
 	const dir = await mkdtemp(join(tmpdir(), "otel-lines-"));
 	const file = join(dir, "app.ts");

@@ -84,7 +84,7 @@ Every series is published once with a zero value at session start so dashboard p
 
 `user_prompt`, `assistant_response`, `api_request`, `api_error`, `api_refusal`, `tool_result`, `tool_decision`, `permission_mode_changed`, `compaction`, and `internal_error`. Every event carries `prompt.id`, so one prompt and all of its API requests and tool calls can be correlated. Prompt text, response text, and tool arguments are replaced with `<REDACTED>` unless the matching `OTEL_LOG_*` flag is set.
 
-Run `/otel` to see the active exporters, resolved endpoints, whether this session is exporting, and the last error.
+Run `/otel` to see the active exporters, resolved endpoints, whether this session is exporting, and the last error. The command is available even while telemetry is off, where it reports what is missing.
 
 ## Configuration
 
