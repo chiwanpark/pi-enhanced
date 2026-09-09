@@ -1,0 +1,399 @@
+import os from "node:os";
+import type { Attributes, Counter } from "@opentelemetry/api";
+import { SeverityNumber, type Logger } from "@opentelemetry/api-logs";
+import { resourceFromAttributes } from "@opentelemetry/resources";
+import {
+	BatchLogRecordProcessor,
+	ConsoleLogRecordExporter,
+	LoggerProvider,
+	type LogRecordProcessor,
+} from "@opentelemetry/sdk-logs";
+import {
+	AggregationTemporality,
+	ConsoleMetricExporter,
+	MeterProvider,
+	PeriodicExportingMetricReader,
+	type IMetricReader,
+	type PushMetricExporter,
+} from "@opentelemetry/sdk-metrics";
+import type { StandardAttributes } from "./attributes.ts";
+import {
+	resolveSignalEndpoint,
+	resolveSignalHeaders,
+	resolveSignalProtocol,
+	type OtelExporterConfig,
+} from "./config.ts";
+
+export const INSTRUMENTATION_SCOPE = "pi-enhanced/otel-exporter";
+
+export type EventName =
+	| "user_prompt"
+	| "assistant_response"
+	| "tool_result"
+	| "tool_decision"
+	| "api_request"
+	| "api_error"
+	| "api_refusal"
+	| "permission_mode_changed"
+	| "compaction"
+	| "internal_error";
+
+export interface TelemetryInit {
+	config: OtelExporterConfig;
+	serviceVersion: string;
+	/** Standard attributes for metric datapoints and log records. */
+	standardAttributes: StandardAttributes;
+	onError?: (message: string) => void;
+}
+
+type MetricCounters = {
+	session: Counter;
+	linesOfCode: Counter;
+	pullRequest: Counter;
+	commit: Counter;
+	cost: Counter;
+	token: Counter;
+	codeEditDecision: Counter;
+	activeTime: Counter;
+};
+
+function sanitizeAttributes(attributes: Record<string, unknown>): Attributes {
+	const result: Attributes = {};
+	for (const [key, value] of Object.entries(attributes)) {
+		if (value === undefined || value === null) continue;
+		if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+			result[key] = value;
+			continue;
+		}
+		if (Array.isArray(value) && value.every((entry) => typeof entry === "string")) {
+			result[key] = value as string[];
+			continue;
+		}
+		result[key] = String(value);
+	}
+	return result;
+}
+
+async function createOtlpMetricExporter(config: OtelExporterConfig): Promise<PushMetricExporter> {
+	const protocol = resolveSignalProtocol(config, "metrics");
+	const url = resolveSignalEndpoint(config, "metrics");
+	const headers = resolveSignalHeaders(config, "metrics");
+	const temporalityPreference =
+		config.temporalityPreference === "cumulative" ? AggregationTemporality.CUMULATIVE : AggregationTemporality.DELTA;
+	const options = {
+		...(url ? { url } : {}),
+		...(Object.keys(headers).length > 0 ? { headers } : {}),
+		temporalityPreference,
+	};
+
+	if (protocol === "grpc") {
+		const { OTLPMetricExporter } = await import("@opentelemetry/exporter-metrics-otlp-grpc");
+		return new OTLPMetricExporter(options);
+	}
+	if (protocol === "http/json") {
+		const { OTLPMetricExporter } = await import("@opentelemetry/exporter-metrics-otlp-http");
+		return new OTLPMetricExporter(options);
+	}
+	const { OTLPMetricExporter } = await import("@opentelemetry/exporter-metrics-otlp-proto");
+	return new OTLPMetricExporter(options);
+}
+
+async function createOtlpLogProcessor(config: OtelExporterConfig): Promise<LogRecordProcessor> {
+	const protocol = resolveSignalProtocol(config, "logs");
+	const url = resolveSignalEndpoint(config, "logs");
+	const headers = resolveSignalHeaders(config, "logs");
+	const options = {
+		...(url ? { url } : {}),
+		...(Object.keys(headers).length > 0 ? { headers } : {}),
+	};
+
+	const exporter = await (async () => {
+		if (protocol === "grpc") {
+			const { OTLPLogExporter } = await import("@opentelemetry/exporter-logs-otlp-grpc");
+			return new OTLPLogExporter(options);
+		}
+		if (protocol === "http/json") {
+			const { OTLPLogExporter } = await import("@opentelemetry/exporter-logs-otlp-http");
+			return new OTLPLogExporter(options);
+		}
+		const { OTLPLogExporter } = await import("@opentelemetry/exporter-logs-otlp-proto");
+		return new OTLPLogExporter(options);
+	})();
+
+	return new BatchLogRecordProcessor({ exporter, scheduledDelayMillis: config.logsExportIntervalMillis });
+}
+
+async function createMetricReaders(config: OtelExporterConfig, onError: (message: string) => void) {
+	const readers: IMetricReader[] = [];
+	for (const kind of config.metricsExporters) {
+		try {
+			if (kind === "otlp") {
+				readers.push(
+					new PeriodicExportingMetricReader({
+						exporter: await createOtlpMetricExporter(config),
+						exportIntervalMillis: config.metricExportIntervalMillis,
+					}),
+				);
+			} else if (kind === "console") {
+				readers.push(
+					new PeriodicExportingMetricReader({
+						exporter: new ConsoleMetricExporter(),
+						exportIntervalMillis: config.metricExportIntervalMillis,
+					}),
+				);
+			} else if (kind === "prometheus") {
+				const { PrometheusExporter } = await import("@opentelemetry/exporter-prometheus");
+				readers.push(new PrometheusExporter({ host: config.prometheusHost, port: config.prometheusPort }));
+			}
+		} catch (error) {
+			onError(`failed to start ${kind} metrics exporter: ${error instanceof Error ? error.message : String(error)}`);
+		}
+	}
+	return readers;
+}
+
+async function createLogProcessors(config: OtelExporterConfig, onError: (message: string) => void) {
+	const processors: LogRecordProcessor[] = [];
+	for (const kind of config.logsExporters) {
+		try {
+			if (kind === "otlp") processors.push(await createOtlpLogProcessor(config));
+			else if (kind === "console") {
+				processors.push(new BatchLogRecordProcessor({ exporter: new ConsoleLogRecordExporter() }));
+			}
+		} catch (error) {
+			onError(`failed to start ${kind} logs exporter: ${error instanceof Error ? error.message : String(error)}`);
+		}
+	}
+	return processors;
+}
+
+/**
+ * Owns the OpenTelemetry providers and exposes Claude Code compatible metrics and events.
+ * Provider setup runs in the background so session startup never waits on exporter modules;
+ * calls made before setup finishes are queued and replayed in order.
+ */
+export class OtelTelemetry {
+	private readonly config: OtelExporterConfig;
+	private readonly serviceVersion: string;
+	private readonly onError: (message: string) => void;
+	private readonly metricAttributeBase: Attributes;
+	private readonly eventAttributeBase: Attributes;
+	private meterProvider: MeterProvider | undefined;
+	private loggerProvider: LoggerProvider | undefined;
+	private logger: Logger | undefined;
+	private counters: MetricCounters | undefined;
+	private readonly pending: (() => void)[] = [];
+	private readonly readyPromise: Promise<void>;
+	private ready = false;
+	private sequence = 0;
+
+	constructor(init: TelemetryInit) {
+		this.config = init.config;
+		this.serviceVersion = init.serviceVersion;
+		this.onError = init.onError ?? (() => {});
+		this.metricAttributeBase = sanitizeAttributes(init.standardAttributes.metrics);
+		this.eventAttributeBase = sanitizeAttributes(init.standardAttributes.events);
+		this.readyPromise = this.start();
+	}
+
+	private async start(): Promise<void> {
+		try {
+			const resource = resourceFromAttributes({
+				"service.name": this.config.serviceName,
+				"service.version": this.serviceVersion,
+				...(this.config.includeHostAttributes
+					? {
+							"os.type": process.platform,
+							"os.version": os.release(),
+							"host.arch": process.arch,
+							"host.name": os.hostname(),
+						}
+					: {}),
+				...this.config.resourceAttributes,
+			});
+			const readers = await createMetricReaders(this.config, this.onError);
+			const processors = await createLogProcessors(this.config, this.onError);
+
+			if (readers.length > 0) {
+				this.meterProvider = new MeterProvider({ resource, readers });
+				this.counters = this.createCounters(this.meterProvider);
+			}
+			if (processors.length > 0) {
+				this.loggerProvider = new LoggerProvider({ resource, processors });
+				this.logger = this.loggerProvider.getLogger(INSTRUMENTATION_SCOPE, this.serviceVersion);
+			}
+		} catch (error) {
+			this.onError(`telemetry setup failed: ${error instanceof Error ? error.message : String(error)}`);
+		} finally {
+			this.ready = true;
+			const queued = this.pending.splice(0);
+			for (const task of queued) {
+				try {
+					task();
+				} catch {
+					// A single dropped datapoint must not break the replay of the rest.
+				}
+			}
+		}
+	}
+
+	private createCounters(meterProvider: MeterProvider): MetricCounters {
+		const meter = meterProvider.getMeter(INSTRUMENTATION_SCOPE, this.serviceVersion);
+		// Prometheus-only scrapes drop units so the exposition format stays valid.
+		const prometheusOnly =
+			this.config.metricsExporters.length === 1 && this.config.metricsExporters[0] === "prometheus";
+		const unit = (value: string) => (prometheusOnly ? {} : { unit: value });
+		return {
+			session: meter.createCounter("claude_code.session.count", { description: "Count of CLI sessions started" }),
+			linesOfCode: meter.createCounter("claude_code.lines_of_code.count", {
+				description: "Count of lines of code modified",
+			}),
+			pullRequest: meter.createCounter("claude_code.pull_request.count", {
+				description: "Number of pull requests created",
+			}),
+			commit: meter.createCounter("claude_code.commit.count", { description: "Number of git commits created" }),
+			cost: meter.createCounter("claude_code.cost.usage", {
+				description: "Cost of the session",
+				...unit("USD"),
+			}),
+			token: meter.createCounter("claude_code.token.usage", {
+				description: "Number of tokens used",
+				...unit("tokens"),
+			}),
+			codeEditDecision: meter.createCounter("claude_code.code_edit_tool.decision", {
+				description: "Count of code editing tool permission decisions",
+			}),
+			activeTime: meter.createCounter("claude_code.active_time.total", {
+				description: "Total active time",
+				...unit("s"),
+			}),
+		};
+	}
+
+	/** Run now when the providers exist, otherwise replay in call order once setup finishes. */
+	private enqueue(task: () => void): void {
+		if (this.ready) {
+			task();
+			return;
+		}
+		this.pending.push(task);
+	}
+
+	private metricAttributes(extra: Record<string, unknown> = {}): Attributes {
+		return { ...this.metricAttributeBase, ...sanitizeAttributes(extra) };
+	}
+
+	addSession(startType: string, model: string | undefined): void {
+		const attributes = this.metricAttributes({ start_type: startType, model });
+		this.enqueue(() => this.counters?.session.add(1, attributes));
+	}
+
+	/**
+	 * Publish every metric series with a zero value so dashboard panels resolve before the first
+	 * matching action instead of rendering "No data".
+	 */
+	primeSeries(model: string | undefined, tokenTypes: readonly string[]): void {
+		const lines = (type: string) => this.metricAttributes({ type, model });
+		const request = this.metricAttributes({ model, query_source: "main" });
+		const tokens = tokenTypes.map((type) => this.metricAttributes({ model, query_source: "main", type }));
+		const decision = this.metricAttributes({
+			tool_name: "Edit",
+			decision: "accept",
+			source: "config",
+			language: "unknown",
+		});
+		const plain = this.metricAttributes();
+		const added = lines("added");
+		const removed = lines("removed");
+		const userTime = this.metricAttributes({ type: "user" });
+		const cliTime = this.metricAttributes({ type: "cli" });
+
+		this.enqueue(() => {
+			const counters = this.counters;
+			if (!counters) return;
+			counters.linesOfCode.add(0, added);
+			counters.linesOfCode.add(0, removed);
+			counters.pullRequest.add(0, plain);
+			counters.commit.add(0, plain);
+			counters.cost.add(0, request);
+			for (const attributes of tokens) counters.token.add(0, attributes);
+			counters.codeEditDecision.add(0, decision);
+			counters.activeTime.add(0, userTime);
+			counters.activeTime.add(0, cliTime);
+		});
+	}
+
+	addLinesOfCode(type: "added" | "removed", lines: number, model: string | undefined): void {
+		if (lines <= 0) return;
+		const attributes = this.metricAttributes({ type, model });
+		this.enqueue(() => this.counters?.linesOfCode.add(lines, attributes));
+	}
+
+	addPullRequests(count: number): void {
+		if (count <= 0) return;
+		const attributes = this.metricAttributes();
+		this.enqueue(() => this.counters?.pullRequest.add(count, attributes));
+	}
+
+	addCommits(count: number): void {
+		if (count <= 0) return;
+		const attributes = this.metricAttributes();
+		this.enqueue(() => this.counters?.commit.add(count, attributes));
+	}
+
+	addCost(costUsd: number, extra: Record<string, unknown>): void {
+		if (!Number.isFinite(costUsd) || costUsd <= 0) return;
+		const attributes = this.metricAttributes(extra);
+		this.enqueue(() => this.counters?.cost.add(costUsd, attributes));
+	}
+
+	addTokens(type: string, tokens: number, extra: Record<string, unknown>): void {
+		if (tokens <= 0) return;
+		const attributes = this.metricAttributes({ ...extra, type });
+		this.enqueue(() => this.counters?.token.add(tokens, attributes));
+	}
+
+	addCodeEditDecision(extra: Record<string, unknown>): void {
+		const attributes = this.metricAttributes(extra);
+		this.enqueue(() => this.counters?.codeEditDecision.add(1, attributes));
+	}
+
+	addActiveTime(seconds: number, type: "user" | "cli"): void {
+		if (!Number.isFinite(seconds) || seconds <= 0) return;
+		const attributes = this.metricAttributes({ type });
+		this.enqueue(() => this.counters?.activeTime.add(seconds, attributes));
+	}
+
+	emitEvent(name: EventName, extra: Record<string, unknown> = {}, timestampMs?: number): void {
+		this.sequence += 1;
+		const timestamp = timestampMs ?? Date.now();
+		const attributes: Attributes = {
+			...this.eventAttributeBase,
+			...sanitizeAttributes({
+				"event.name": name,
+				"event.timestamp": new Date(timestamp).toISOString(),
+				"event.sequence": this.sequence,
+				...extra,
+			}),
+		};
+		this.enqueue(() =>
+			this.logger?.emit({
+				eventName: `claude_code.${name}`,
+				timestamp,
+				severityNumber: SeverityNumber.INFO,
+				severityText: "INFO",
+				attributes,
+			}),
+		);
+	}
+
+	async forceFlush(): Promise<void> {
+		await this.readyPromise;
+		await Promise.allSettled([this.meterProvider?.forceFlush(), this.loggerProvider?.forceFlush()]);
+	}
+
+	async shutdown(): Promise<void> {
+		await this.readyPromise;
+		await Promise.allSettled([this.meterProvider?.shutdown(), this.loggerProvider?.shutdown()]);
+	}
+}

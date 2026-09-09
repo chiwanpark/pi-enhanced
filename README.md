@@ -33,6 +33,59 @@ Use `harmfulCommandGuard.allowPaths` and `harmfulCommandGuard.denyPaths` (see [C
 
 The guard resolves symlinks (including existing symlink parents of new files), follows `cd` changes, and checks every command in `&&`, `||`, `;`, `|`, and newline chains. Run `/harmful` to toggle harmful mode and temporarily bypass all command, write, and edit checks for the current session branch; `/harmful on` and `/harmful off` set it explicitly, and `/harmful paths` lists the configured path exceptions.
 
+## OpenTelemetry Exporter
+
+Exports pi usage as OpenTelemetry metrics and log events using the same metric names, event names, and attributes as the Claude Code Enterprise OTEL integration, so existing collectors and dashboards work without changes. Telemetry is off until you enable it, and no content is exported unless you opt in.
+
+Enable it with the Claude Code environment variables or with the `otelExporter` settings block:
+
+```bash
+export CLAUDE_CODE_ENABLE_TELEMETRY=1
+export OTEL_METRICS_EXPORTER=otlp
+export OTEL_LOGS_EXPORTER=otlp
+export OTEL_EXPORTER_OTLP_PROTOCOL=grpc
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://collector:4317
+export OTEL_EXPORTER_OTLP_HEADERS="Authorization=Bearer <token>"
+```
+
+### Reusing the Claude Code Destination
+
+In a Claude Code Enterprise deployment the endpoint and credentials are pushed to each machine as an `env` block instead of being typed by hand. Set `otelExporter.discoverClaudeCodeSettings` to `true` and pi reads that block and reports to the same collector, with no endpoint or token in pi's own configuration:
+
+```json
+{ "piEnhanced": { "otelExporter": { "discoverClaudeCodeSettings": true } } }
+```
+
+Files are read in this order, later ones overriding earlier ones per key:
+
+1. `~/.claude/settings.json`
+2. `<project>/.claude/settings.json`, then `<project>/.claude/settings.local.json`
+3. `managed-settings.json` and `managed-settings.d/*.json` in the system directory: `/etc/claude-code` on Linux and WSL, `/Library/Application Support/ClaudeCode` on macOS, `C:\Program Files\ClaudeCode` on Windows
+4. `~/.claude/remote-settings.json`, the cached server-managed settings Claude Code refreshes hourly
+
+Borrowed configuration exports only requests to the first-party Anthropic API, because the endpoint and credential belong to the organization's Claude Code deployment. Requests served by any other provider produce no export at all, including Claude reached through a gateway or reseller . In a mixed session only the Anthropic requests, and the tool calls and metrics around them, are reported, and a session that never calls Anthropic never even loads the OpenTelemetry SDK. Set `otelExporter.restrictToAnthropicProvider` to `false` to report every provider, or to `true` to apply the same restriction to configuration you wrote yourself.
+
+### Metrics
+
+| Metric                                | Source in pi                                                                            |
+| ------------------------------------- | --------------------------------------------------------------------------------------- |
+| `claude_code.session.count`           | `session_start`, with `start_type` derived from the session reason and the active model |
+| `claude_code.token.usage`             | Assistant message usage, split into `input`, `output`, `cacheRead`, and `cacheCreation` |
+| `claude_code.cost.usage`              | Assistant message cost total in USD                                                     |
+| `claude_code.lines_of_code.count`     | Lines added and removed, diffed from the file before and after each `edit`/`write`      |
+| `claude_code.commit.count`            | Commits that a bash command actually added to `HEAD`                                    |
+| `claude_code.pull_request.count`      | Pull and merge request urls printed by `gh pr create`, `glab mr create`, or `hub`       |
+| `claude_code.code_edit_tool.decision` | Accepted and guard-rejected `edit`/`write` calls, with the file language                |
+| `claude_code.active_time.total`       | User interaction gaps (`type=user`) and agent run spans (`type=cli`)                    |
+
+Every series is published once with a zero value at session start so dashboard panels resolve before the first matching action. Set `otelExporter.primeMetricSeries` to `false` to export only real activity.
+
+### Events
+
+`user_prompt`, `assistant_response`, `api_request`, `api_error`, `api_refusal`, `tool_result`, `tool_decision`, `permission_mode_changed`, `compaction`, and `internal_error`. Every event carries `prompt.id`, so one prompt and all of its API requests and tool calls can be correlated. Prompt text, response text, and tool arguments are replaced with `<REDACTED>` unless the matching `OTEL_LOG_*` flag is set.
+
+Run `/otel` to see the active exporters, resolved endpoints, whether this session is exporting, and the last error.
+
 ## Configuration
 
 This package reads the extension-specific configuration from these files, in order:
@@ -61,6 +114,29 @@ Project settings override global settings.
   - `timeoutMs`: Request timeout in milliseconds (default: 120000).
   - `endpoint`: Search API endpoint (default: `"https://chatgpt.com/backend-api/codex/responses"`).
   - `reasoningEffort`: Reasoning effort sent with the search request: `"none"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, or `"max"`. Unset leaves the effort to the provider default.
+- `otelExporter`: Configures the [OpenTelemetry exporter](#opentelemetry-exporter). Settings override the equivalent environment variables, and project settings override global ones.
+  - `enabled`: Master switch, the equivalent of `CLAUDE_CODE_ENABLE_TELEMETRY` (default: false).
+  - `discoverClaudeCodeSettings`: Adopt the telemetry `env` block from the Claude Code settings chain when the environment leaves a value unset (default: false). See [Reusing the Claude Code Destination](#reusing-the-claude-code-destination).
+  - `restrictToAnthropicProvider`: Export only requests served by the first-party `anthropic` provider, excluding gateways and resellers (default: true when `discoverClaudeCodeSettings` supplied the configuration, otherwise false).
+  - `serviceName`: Value of the `service.name` resource attribute (default: `"pi"`).
+  - `metricsExporter`: `"otlp"`, `"console"`, `"prometheus"`, `"none"`, or an array of them (default: none).
+  - `logsExporter`: `"otlp"`, `"console"`, `"none"`, or an array of them (default: none).
+  - `protocol`, `metricsProtocol`, `logsProtocol`: `"grpc"`, `"http/protobuf"`, or `"http/json"` (default: `"http/protobuf"`).
+  - `endpoint`, `metricsEndpoint`, `logsEndpoint`: Collector endpoints. The generic endpoint gets `/v1/metrics` or `/v1/logs` appended for the HTTP protocols, unless it already ends with that path.
+  - `headers`, `metricsHeaders`, `logsHeaders`: Header objects merged onto the generic headers for that signal.
+  - `metricExportIntervalMillis`: Metric export interval (default: 60000).
+  - `logsExportIntervalMillis`: Log batch delay (default: 5000).
+  - `temporalityPreference`: `"delta"` or `"cumulative"` (default: `"delta"`).
+  - `prometheusHost`, `prometheusPort`: Scrape endpoint for the Prometheus exporter (default: `"localhost"`, 9464).
+  - `resourceAttributes`: Extra attributes merged with `OTEL_RESOURCE_ATTRIBUTES`.
+  - `organizationId`: Value of the `organization.id` attribute, the equivalent of `CLAUDE_CODE_ORGANIZATION_ID`. Never guessed from the user's email (default: unset).
+  - `includeHostAttributes`: Attach the `os.type`, `os.version`, `host.arch`, and `host.name` resource attributes (default: true).
+  - `primeMetricSeries`: Publish every metric series with a zero value at session start so dashboards find them (default: true).
+  - `includeSessionId`, `includeVersion`, `includeEntrypoint`, `includeAccountUuid`, `includeResourceAttributes`: Metric cardinality controls (defaults: true, false, false, true, true). Events always carry the full attribute set.
+  - `logUserPrompts`, `logAssistantResponses`, `logToolDetails`: Content opt-ins (default: false). `logAssistantResponses` follows `logUserPrompts` when unset.
+  - `contentMaxLength`: Truncation limit for content-bearing attributes (default: 61440).
+  - `metrics`: Per-metric toggles, or `false` to disable all of them. Keys: `sessionCount`, `linesOfCode`, `pullRequest`, `commit`, `cost`, `token`, `codeEditToolDecision`, `activeTime` (all default: true).
+  - `events`: Per-event toggles, or `false` to disable all of them. Keys: `userPrompt`, `assistantResponse`, `toolResult`, `toolDecision`, `apiRequest`, `apiError`, `apiRefusal`, `permissionModeChanged`, `compaction`, `internalError` (all default: true).
 
 ### Example
 
@@ -85,6 +161,22 @@ Project settings override global settings.
       "reasoningEffort": "low",
       "maxSources": 5,
       "timeoutMs": 120000
+    },
+    "otelExporter": {
+      "enabled": true,
+      "metricsExporter": "otlp",
+      "logsExporter": "otlp",
+      "protocol": "grpc",
+      "endpoint": "http://collector.internal:4317",
+      "headers": {
+        "Authorization": "Bearer <token>"
+      },
+      "resourceAttributes": {
+        "department": "platform"
+      },
+      "events": {
+        "toolResult": false
+      }
     }
   }
 }

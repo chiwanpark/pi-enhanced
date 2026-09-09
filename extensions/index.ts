@@ -4,6 +4,7 @@ import askUserExtension from "./ask-user";
 import editorExtension from "./editor";
 import harmfulCommandGuardExtension from "./harmful-command-guard";
 import hashlineExtension from "./hashline";
+import otelExporterExtension from "./otel-exporter";
 import patchThemeExtension from "./patch-theme";
 import planModeExtension from "./plan-mode";
 import statusCommandExtension from "./status-command";
@@ -40,6 +41,7 @@ export default composeExtensions(
 	statusbarExtension,
 	statusCommandExtension,
 	usageCommandExtension,
+	otelExporterExtension,
 	systemPromptCommandExtension,
 	// Run last so no pi-enhanced prompt hook can append content after the cleanup.
 	systemPromptCleanupExtension,
