@@ -1,5 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { readPiEnhancedSettings } from "./internal/common";
+import { readPiEnhancedSettings } from "./internal/common.ts";
 
 export type SemanticDisciplineMode = "off" | "warn" | "block";
 
@@ -161,6 +161,10 @@ function fingerprint(toolName: string, finding: Finding, detail: string): string
 	return `${toolName}:${finding.kind}:${finding.reason}:${detail.slice(0, 160)}`;
 }
 
+function formatWarning(message: string): string {
+	return ["", "<semantic-discipline-warning>", message, "</semantic-discipline-warning>"].join("\n");
+}
+
 export default function semanticDisciplineExtension(pi: ExtensionAPI) {
 	const notified = new Set<string>();
 	const pendingWarnings = new Map<string, string>();
@@ -207,7 +211,7 @@ export default function semanticDisciplineExtension(pi: ExtensionAPI) {
 
 		pendingWarnings.delete(event.toolCallId);
 		return {
-			content: [...event.content, { type: "text", text: `Semantic discipline warning: ${warning}` }],
+			content: [...event.content, { type: "text", text: formatWarning(warning) }],
 		};
 	});
 
