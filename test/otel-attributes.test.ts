@@ -9,7 +9,7 @@ import {
 	resolveOrganizationId,
 } from "../extensions/internal/otel/identity.ts";
 
-const identity = { userId: "anon-1", email: "dev@example.com", accountUuid: "acct-9" };
+const identity = { userId: "anon-1", email: "dev@example.com", accountUuid: "acct-9", organizationId: undefined };
 
 function attributes(env: OtelEnv = {}) {
 	return buildStandardAttributes({

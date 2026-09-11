@@ -180,8 +180,9 @@ export function createOtelExporter(config: OtelExporterConfig) {
 
 		let telemetry: TelemetrySink | undefined;
 		let sessionCtx: ExtensionContext | undefined;
-		let identity = loadIdentity(undefined);
-		let organizationId = resolveOrganizationId(config.organizationId);
+		const identityOptions = { claudeCode: config.useClaudeCodeIdentity };
+		let identity = loadIdentity(undefined, identityOptions);
+		let organizationId = resolveOrganizationId(config.organizationId, process.env, identity.organizationId);
 		let activeProvider: string | undefined;
 		let activeModel: string | undefined;
 		let promptId: string | undefined;
@@ -291,12 +292,12 @@ export function createOtelExporter(config: OtelExporterConfig) {
 			"session_start",
 			guard(async (event, ctx) => {
 				permissionMode = readPermissionMode(ctx);
-				identity = loadIdentity(ctx.model?.provider);
+				identity = loadIdentity(ctx.model?.provider, identityOptions);
 				if (!identity.email) {
 					// Providers that do not expose an email still resolve to a person through git config.
 					identity = { ...identity, email: await gitUserEmail() };
 				}
-				organizationId = resolveOrganizationId(config.organizationId);
+				organizationId = resolveOrganizationId(config.organizationId, process.env, identity.organizationId);
 
 				const startType = sessionStartType(event.reason, ctx.sessionManager.getEntries().length > 0);
 				if (startType && config.metrics.sessionCount) {
@@ -429,10 +430,10 @@ export function createOtelExporter(config: OtelExporterConfig) {
 				const model = message.responseModel ?? message.model;
 				const requestId = message.responseId ?? request?.requestId;
 				const thinkingLevel = pi.getThinkingLevel();
+				const metricAttribution = { model, query_source: "main" };
 				const attribution = {
-					model,
+					...metricAttribution,
 					provider: message.provider,
-					query_source: "main",
 					// Providers that report no native effort still have pi's thinking level, unless it is off.
 					effort: message.providerThinkingLevel ?? (thinkingLevel === "off" ? undefined : thinkingLevel),
 				};
@@ -478,10 +479,10 @@ export function createOtelExporter(config: OtelExporterConfig) {
 
 				if (config.metrics.token) {
 					for (const entry of tokenUsageEntries(usage)) {
-						sink?.addTokens(entry.type, entry.tokens, attribution);
+						sink?.addTokens(entry.type, entry.tokens, metricAttribution);
 					}
 				}
-				if (config.metrics.cost) sink?.addCost(usage.cost.total, attribution);
+				if (config.metrics.cost) sink?.addCost(usage.cost.total, metricAttribution);
 
 				if (config.events.assistantResponse) {
 					const text = assistantText(message);
@@ -692,7 +693,6 @@ export function createOtelExporter(config: OtelExporterConfig) {
 				sessionCtx = undefined;
 				toolRuns.clear();
 				pendingRequests.length = 0;
-				await current?.forceFlush();
 				await current?.shutdown();
 			}),
 		);

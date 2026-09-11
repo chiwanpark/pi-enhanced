@@ -278,6 +278,27 @@ test("a full turn exports claude code metrics and events over otlp", async () =>
 		[0],
 	);
 
+	const tokens = metricPoints(captures, "claude_code.token.usage");
+	assert.deepEqual(
+		tokens.map((point) => [point.attributes["type"], point.value]).sort(),
+		[
+			["cacheCreation", 2],
+			["cacheRead", 20],
+			["input", 10],
+			["output", 5],
+		].sort(),
+	);
+	for (const point of tokens) {
+		assert.equal(point.attributes["query_source"], "main");
+		assert.equal(point.attributes["provider"], undefined);
+		assert.equal(point.attributes["effort"], undefined);
+	}
+
+	const costs = metricPoints(captures, "claude_code.cost.usage");
+	assert.equal(costs.length, 1);
+	assert.equal(costs[0]?.value, 0.033);
+	assert.equal(costs[0]?.attributes["provider"], undefined);
+
 	const events = logRecords(captures);
 	const eventNames = events.map((record) => record.eventName);
 	assert.deepEqual(eventNames, [
@@ -295,6 +316,7 @@ test("a full turn exports claude code metrics and events over otlp", async () =>
 
 	const apiRequest = events[1];
 	assert.equal(attributeValue(apiRequest, "model"), "claude-sonnet-5");
+	assert.equal(attributeValue(apiRequest, "provider"), "anthropic");
 	assert.equal(attributeValue(apiRequest, "input_tokens"), 10);
 	assert.equal(attributeValue(apiRequest, "cache_creation_tokens"), 2);
 	assert.equal(attributeValue(apiRequest, "request_id"), "req_123");

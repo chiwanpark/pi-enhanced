@@ -3,8 +3,13 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { claudeCodeSettingsFiles, readClaudeCodeTelemetryEnv } from "../extensions/internal/otel/claude-settings.ts";
+import {
+	claudeCodeSettingsFiles,
+	readClaudeCodeIdentity,
+	readClaudeCodeTelemetryEnv,
+} from "../extensions/internal/otel/claude-settings.ts";
 import { buildOtelConfig, mergeDiscoveredEnv } from "../extensions/internal/otel/config.ts";
+import { loadIdentity, resolveOrganizationId } from "../extensions/internal/otel/identity.ts";
 
 function scratch() {
 	const root = mkdtempSync(path.join(os.tmpdir(), "pi-otel-claude-"));
@@ -175,4 +180,114 @@ test("restrictToAnthropicProvider can be overridden either way", () => {
 
 	const closed = buildOtelConfig({}, [{ otelExporter: { restrictToAnthropicProvider: true } }]);
 	assert.equal(closed.restrictToAnthropicProvider, true);
+});
+
+test("borrowed configuration reports under the claude code service name", () => {
+	const discovered = { CLAUDE_CODE_ENABLE_TELEMETRY: "1", OTEL_METRICS_EXPORTER: "otlp" };
+
+	const borrowed = buildOtelConfig(mergeDiscoveredEnv({}, discovered), [], { serviceName: "claude-code" });
+	assert.equal(borrowed.serviceName, "claude-code");
+
+	const own = buildOtelConfig(mergeDiscoveredEnv({}, discovered), []);
+	assert.equal(own.serviceName, "pi");
+
+	const named = buildOtelConfig(mergeDiscoveredEnv({ OTEL_SERVICE_NAME: "pi-lab" }, discovered), [], {
+		serviceName: "claude-code",
+	});
+	assert.equal(named.serviceName, "pi-lab");
+});
+
+test("borrowed configuration adopts the claude code identity", () => {
+	const discovered = { CLAUDE_CODE_ENABLE_TELEMETRY: "1", OTEL_METRICS_EXPORTER: "otlp" };
+
+	const borrowed = buildOtelConfig(mergeDiscoveredEnv({}, discovered), [], { useClaudeCodeIdentity: true });
+	assert.equal(borrowed.useClaudeCodeIdentity, true);
+
+	const own = buildOtelConfig(mergeDiscoveredEnv({}, discovered), []);
+	assert.equal(own.useClaudeCodeIdentity, false);
+
+	const declined = buildOtelConfig(
+		mergeDiscoveredEnv({}, discovered),
+		[{ otelExporter: { useClaudeCodeIdentity: false } }],
+		{ useClaudeCodeIdentity: true },
+	);
+	assert.equal(declined.useClaudeCodeIdentity, false);
+});
+
+test("the claude code identity comes from the account it is logged in as", () => {
+	const { home } = scratch();
+	writeSettings(path.join(home, ".claude.json"), {
+		userID: "39f98816c16768b6",
+		machineID: "machine-1",
+		oauthAccount: {
+			accountUuid: "ce981faa-6215-4839-84d4-5435845a6352",
+			emailAddress: "dev@corp.example.com",
+			organizationUuid: "12adddf0-463e-4253-a843-8d54149b34b1",
+		},
+	});
+
+	assert.deepEqual(readClaudeCodeIdentity(home), {
+		userId: "39f98816c16768b6",
+		email: "dev@corp.example.com",
+		accountUuid: "ce981faa-6215-4839-84d4-5435845a6352",
+		organizationId: "12adddf0-463e-4253-a843-8d54149b34b1",
+	});
+});
+
+test("the consent record supplies the account when no oauth block exists", () => {
+	const { home } = scratch();
+	writeSettings(path.join(home, ".claude.json"), { userID: "anon-42" });
+	writeSettings(path.join(home, ".claude", "remote-settings-consent.json"), {
+		version: 1,
+		records: {
+			"12adddf0-463e-4253-a843-8d54149b34b1": {
+				accountUuid: "ce981faa-6215-4839-84d4-5435845a6352",
+				updatedAt: 1788883302688,
+			},
+		},
+	});
+
+	assert.deepEqual(readClaudeCodeIdentity(home), {
+		userId: "anon-42",
+		email: undefined,
+		accountUuid: "ce981faa-6215-4839-84d4-5435845a6352",
+		organizationId: "12adddf0-463e-4253-a843-8d54149b34b1",
+	});
+});
+
+test("an install without claude code reports nothing to adopt", () => {
+	const { home } = scratch();
+	assert.deepEqual(readClaudeCodeIdentity(home), {
+		userId: undefined,
+		email: undefined,
+		accountUuid: undefined,
+		organizationId: undefined,
+	});
+});
+
+test("the adopted identity wins over pi's own anonymous id", () => {
+	const { home, root } = scratch();
+	writeSettings(path.join(home, ".claude.json"), {
+		userID: "claude-user",
+		oauthAccount: {
+			accountUuid: "acct-claude",
+			emailAddress: "dev@corp.example.com",
+			organizationUuid: "org-claude",
+		},
+	});
+	const identityFile = path.join(root, "pi-enhanced-otel.json");
+
+	const adopted = loadIdentity(undefined, { claudeCode: true, home, identityFile });
+	assert.deepEqual(adopted, {
+		userId: "claude-user",
+		email: "dev@corp.example.com",
+		accountUuid: "acct-claude",
+		organizationId: "org-claude",
+	});
+	assert.equal(resolveOrganizationId(undefined, {}, adopted.organizationId), "org-claude");
+	assert.equal(resolveOrganizationId("org-settings", {}, adopted.organizationId), "org-settings");
+
+	const own = loadIdentity(undefined, { home, identityFile });
+	assert.notEqual(own.userId, "claude-user");
+	assert.equal(own.organizationId, undefined);
 });

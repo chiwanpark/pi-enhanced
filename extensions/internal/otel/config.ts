@@ -17,6 +17,7 @@ export const DEFAULT_CONTENT_MAX_LENGTH = 61_440;
 export const DEFAULT_PROMETHEUS_PORT = 9464;
 export const DEFAULT_PROMETHEUS_HOST = "localhost";
 export const DEFAULT_SERVICE_NAME = "pi";
+export const CLAUDE_CODE_SERVICE_NAME = "claude-code";
 
 export const METRIC_SIGNALS = [
 	"sessionCount",
@@ -67,6 +68,11 @@ export interface OtelExporterConfig {
 	enabled: boolean;
 	/** Adopt the telemetry `env` block from the Claude Code settings chain as a fallback. */
 	discoverClaudeCodeSettings: boolean;
+	/**
+	 * Report the user, account, and organization Claude Code reports on this machine.
+	 * Defaults to true once the configuration is discovered from Claude Code.
+	 */
+	useClaudeCodeIdentity: boolean;
 	/** Value for the `organization.id` attribute, which pi cannot derive on its own. */
 	organizationId: string | undefined;
 	/** Attach `os.*` and `host.*` resource attributes for fleet-level grouping. */
@@ -107,17 +113,20 @@ export type OtelEnv = Record<string, string | undefined>;
 export interface OtelConfigDefaults {
 	/** Baseline for `restrictToAnthropicProvider` before env and settings are applied. */
 	restrictToAnthropicProvider?: boolean;
+	serviceName?: string;
+	useClaudeCodeIdentity?: boolean;
 }
 
 function defaultConfig(defaults: OtelConfigDefaults = {}): OtelExporterConfig {
 	return {
 		enabled: false,
 		discoverClaudeCodeSettings: false,
+		useClaudeCodeIdentity: defaults.useClaudeCodeIdentity ?? false,
 		organizationId: undefined,
 		includeHostAttributes: true,
 		primeMetricSeries: true,
 		restrictToAnthropicProvider: defaults.restrictToAnthropicProvider ?? false,
-		serviceName: DEFAULT_SERVICE_NAME,
+		serviceName: defaults.serviceName ?? DEFAULT_SERVICE_NAME,
 		metricsExporters: [],
 		logsExporters: [],
 		protocol: undefined,
@@ -131,7 +140,7 @@ function defaultConfig(defaults: OtelConfigDefaults = {}): OtelExporterConfig {
 		logsHeaders: {},
 		metricExportIntervalMillis: DEFAULT_METRIC_EXPORT_INTERVAL_MS,
 		logsExportIntervalMillis: DEFAULT_LOGS_EXPORT_INTERVAL_MS,
-		temporalityPreference: "delta",
+		temporalityPreference: "cumulative",
 		prometheusHost: DEFAULT_PROMETHEUS_HOST,
 		prometheusPort: DEFAULT_PROMETHEUS_PORT,
 		resourceAttributes: {},
@@ -285,6 +294,7 @@ export function applyEnv(config: OtelExporterConfig, env: OtelEnv): OtelExporter
 type OtelSettings = {
 	enabled?: unknown;
 	discoverClaudeCodeSettings?: unknown;
+	useClaudeCodeIdentity?: unknown;
 	organizationId?: unknown;
 	includeHostAttributes?: unknown;
 	primeMetricSeries?: unknown;
@@ -362,6 +372,9 @@ function applySettings(config: OtelExporterConfig, settings: OtelSettings | unde
 	if (typeof settings.enabled === "boolean") next.enabled = settings.enabled;
 	if (typeof settings.discoverClaudeCodeSettings === "boolean") {
 		next.discoverClaudeCodeSettings = settings.discoverClaudeCodeSettings;
+	}
+	if (typeof settings.useClaudeCodeIdentity === "boolean") {
+		next.useClaudeCodeIdentity = settings.useClaudeCodeIdentity;
 	}
 	if (typeof settings.restrictToAnthropicProvider === "boolean") {
 		next.restrictToAnthropicProvider = settings.restrictToAnthropicProvider;
@@ -479,7 +492,9 @@ export function mergeDiscoveredEnv(env: OtelEnv, discovered: Record<string, stri
  * environment leaves unset, so pi reports to the collector the enterprise deployment already configured.
  * Borrowed configuration also defaults to exporting only first-party Anthropic API traffic, since the
  * destination and credential belong to the organization's Claude Code deployment;
- * `restrictToAnthropicProvider` overrides that.
+ * `restrictToAnthropicProvider` overrides that. It reports under the `claude-code` service name and
+ * under the Claude Code account identity too, so the dashboards that deployment already runs pick the
+ * data up; `serviceName` and `useClaudeCodeIdentity` override those.
  */
 export function resolveOtelConfig(cwd: string, env: OtelEnv = process.env): OtelExporterConfig {
 	const sections = readPiEnhancedSettings(cwd);
@@ -488,7 +503,11 @@ export function resolveOtelConfig(cwd: string, env: OtelEnv = process.env): Otel
 
 	const discovered = readClaudeCodeTelemetryEnv({ cwd });
 	if (Object.keys(discovered).length === 0) return config;
-	return buildOtelConfig(mergeDiscoveredEnv(env, discovered), sections, { restrictToAnthropicProvider: true });
+	return buildOtelConfig(mergeDiscoveredEnv(env, discovered), sections, {
+		restrictToAnthropicProvider: true,
+		serviceName: CLAUDE_CODE_SERVICE_NAME,
+		useClaudeCodeIdentity: true,
+	});
 }
 
 /** True when telemetry is enabled and at least one signal has a live exporter. */

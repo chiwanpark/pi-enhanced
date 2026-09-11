@@ -88,3 +88,66 @@ export function readClaudeCodeTelemetryEnv(lookup: ClaudeSettingsLookup): Record
 	}
 	return merged;
 }
+
+export interface ClaudeCodeIdentity {
+	userId: string | undefined;
+	email: string | undefined;
+	accountUuid: string | undefined;
+	organizationId: string | undefined;
+}
+
+function trimmed(value: unknown): string | undefined {
+	if (typeof value !== "string") return undefined;
+	const result = value.trim();
+	return result.length > 0 ? result : undefined;
+}
+
+/**
+ * Account and organization recorded when Claude Code accepted the server-managed settings. It is the
+ * fallback for an install whose `.claude.json` carries no `oauthAccount` block.
+ */
+function consentIdentity(home: string): Pick<ClaudeCodeIdentity, "accountUuid" | "organizationId"> {
+	const consent = readJsonObject(path.join(home, ".claude", "remote-settings-consent.json"));
+	const records = consent?.["records"];
+	if (!records || typeof records !== "object" || Array.isArray(records)) {
+		return { accountUuid: undefined, organizationId: undefined };
+	}
+	for (const [organizationId, record] of Object.entries(records as Record<string, unknown>)) {
+		if (!record || typeof record !== "object") continue;
+		const accountUuid = trimmed((record as { accountUuid?: unknown }).accountUuid);
+		if (!accountUuid) continue;
+		return { accountUuid, organizationId: trimmed(organizationId) };
+	}
+	return { accountUuid: undefined, organizationId: undefined };
+}
+
+const identityCache = new Map<string, ClaudeCodeIdentity>();
+
+/**
+ * The identity Claude Code reports on this machine: its anonymous installation id plus the account it
+ * is logged in as. Reporting the same values makes pi's rows land on the user, account, and
+ * organization the Claude Code dashboards already group by. The result is cached because
+ * `.claude.json` grows with project history and an account does not change inside one process.
+ */
+export function readClaudeCodeIdentity(home = os.homedir()): ClaudeCodeIdentity {
+	const cached = identityCache.get(home);
+	if (cached) return cached;
+
+	const state = readJsonObject(path.join(home, ".claude.json"));
+	const account = state?.["oauthAccount"];
+	const oauth = (account && typeof account === "object" && !Array.isArray(account) ? account : {}) as {
+		accountUuid?: unknown;
+		emailAddress?: unknown;
+		organizationUuid?: unknown;
+	};
+	const fallback = consentIdentity(home);
+
+	const identity: ClaudeCodeIdentity = {
+		userId: trimmed(state?.["userID"]),
+		email: trimmed(oauth.emailAddress),
+		accountUuid: trimmed(oauth.accountUuid) ?? fallback.accountUuid,
+		organizationId: trimmed(oauth.organizationUuid) ?? fallback.organizationId,
+	};
+	identityCache.set(home, identity);
+	return identity;
+}

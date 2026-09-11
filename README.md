@@ -76,6 +76,8 @@ Files are read in this order, later ones overriding earlier ones per key:
 
 Borrowed configuration exports only requests to the first-party Anthropic API, because the endpoint and credential belong to the organization's Claude Code deployment. Requests served by any other provider produce no export at all, including Claude reached through a gateway or reseller . In a mixed session only the Anthropic requests, and the tool calls and metrics around them, are reported, and a session that never calls Anthropic never even loads the OpenTelemetry SDK. Set `otelExporter.restrictToAnthropicProvider` to `false` to report every provider, or to `true` to apply the same restriction to configuration you wrote yourself.
 
+It also reports the identity Claude Code reports: `user.id` is the anonymous installation id from `~/.claude.json`, and `user.email`, `user.account_uuid`, and `organization.id` come from the account it is logged in as, falling back to the account recorded in `~/.claude/remote-settings-consent.json`. Rows from pi then land on the same user, account, and organization the dashboards already group by, instead of under an id only pi knows. Set `otelExporter.useClaudeCodeIdentity` to `false` to keep pi's own anonymous id, or to `true` to adopt the Claude Code identity for configuration you wrote yourself.
+
 ### Metrics
 
 | Metric                                | Source in pi                                                                            |
@@ -89,7 +91,9 @@ Borrowed configuration exports only requests to the first-party Anthropic API, b
 | `claude_code.code_edit_tool.decision` | Accepted and guard-rejected `edit`/`write` calls, with the file language                |
 | `claude_code.active_time.total`       | User interaction gaps (`type=user`) and agent run spans (`type=cli`)                    |
 
-Every series is published once with a zero value at session start so dashboard panels resolve before the first matching action. Set `otelExporter.primeMetricSeries` to `false` to export only real activity.
+Metric datapoints carry the Claude Code attribute set, so pi's series line up with the ones Claude Code produces. Every series is published once with a zero value at session start so dashboard panels resolve before the first matching action. Set `otelExporter.primeMetricSeries` to `false` to export only real activity.
+
+Metrics are exported with cumulative temporality, which republishes every series on each export interval and keeps panels populated through an idle session. Set `otelExporter.temporalityPreference` to `"delta"` for Claude Code's default, which reports a series only in the interval where it changed.
 
 ### Events
 
@@ -134,7 +138,8 @@ Project settings override global settings.
   - `enabled`: Master switch, the equivalent of `CLAUDE_CODE_ENABLE_TELEMETRY` (default: false).
   - `discoverClaudeCodeSettings`: Adopt the telemetry `env` block from the Claude Code settings chain when the environment leaves a value unset (default: false). See [Reusing the Claude Code Destination](#reusing-the-claude-code-destination).
   - `restrictToAnthropicProvider`: Export only requests served by the first-party `anthropic` provider, excluding gateways and resellers (default: true when `discoverClaudeCodeSettings` supplied the configuration, otherwise false).
-  - `serviceName`: Value of the `service.name` resource attribute (default: `"pi"`).
+  - `serviceName`: Value of the `service.name` resource attribute (default: `"claude-code"` when `discoverClaudeCodeSettings` supplied the configuration, otherwise `"pi"`).
+  - `useClaudeCodeIdentity`: Report the user, account, and organization Claude Code reports on this machine (default: true when `discoverClaudeCodeSettings` supplied the configuration, otherwise false).
   - `metricsExporter`: `"otlp"`, `"console"`, `"prometheus"`, `"none"`, or an array of them (default: none).
   - `logsExporter`: `"otlp"`, `"console"`, `"none"`, or an array of them (default: none).
   - `protocol`, `metricsProtocol`, `logsProtocol`: `"grpc"`, `"http/protobuf"`, or `"http/json"` (default: `"http/protobuf"`).
@@ -142,7 +147,7 @@ Project settings override global settings.
   - `headers`, `metricsHeaders`, `logsHeaders`: Header objects merged onto the generic headers for that signal.
   - `metricExportIntervalMillis`: Metric export interval (default: 60000).
   - `logsExportIntervalMillis`: Log batch delay (default: 5000).
-  - `temporalityPreference`: `"delta"` or `"cumulative"` (default: `"delta"`).
+  - `temporalityPreference`: `"delta"` or `"cumulative"` (default: `"cumulative"`).
   - `prometheusHost`, `prometheusPort`: Scrape endpoint for the Prometheus exporter (default: `"localhost"`, 9464).
   - `resourceAttributes`: Extra attributes merged with `OTEL_RESOURCE_ATTRIBUTES`.
   - `organizationId`: Value of the `organization.id` attribute, the equivalent of `CLAUDE_CODE_ORGANIZATION_ID`. Never guessed from the user's email (default: unset).

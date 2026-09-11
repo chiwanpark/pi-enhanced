@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { readUsageAuth, type AuthData } from "../usage-status.ts";
+import { readClaudeCodeIdentity } from "./claude-settings.ts";
 
 export const OTEL_IDENTITY_FILE = path.join(os.homedir(), ".pi", "agent", "pi-enhanced-otel.json");
 
@@ -11,6 +12,13 @@ export interface OtelIdentity {
 	userId: string;
 	email: string | undefined;
 	accountUuid: string | undefined;
+	organizationId: string | undefined;
+}
+
+export interface IdentityOptions {
+	identityFile?: string;
+	claudeCode?: boolean;
+	home?: string;
 }
 
 type IdentityFile = {
@@ -76,14 +84,27 @@ export function readAccountIdentity(
 	};
 }
 
-export function loadIdentity(provider: string | undefined, identityFile = OTEL_IDENTITY_FILE): OtelIdentity {
+/**
+ * Identity for the standard attributes. With `claudeCode` on, the values Claude Code reports on this
+ * machine win, so pi's rows join the ones its dashboards already group; the provider account and pi's
+ * own anonymous id fill whatever Claude Code leaves unknown.
+ */
+export function loadIdentity(provider: string | undefined, options: IdentityOptions = {}): OtelIdentity {
 	let auth: AuthData | null;
 	try {
 		auth = readUsageAuth();
 	} catch {
 		auth = null;
 	}
-	return { userId: loadOrCreateUserId(identityFile), ...readAccountIdentity(provider, auth) };
+	const account = readAccountIdentity(provider, auth);
+	const claudeCode = options.claudeCode ? readClaudeCodeIdentity(options.home) : undefined;
+
+	return {
+		userId: claudeCode?.userId ?? loadOrCreateUserId(options.identityFile ?? OTEL_IDENTITY_FILE),
+		email: claudeCode?.email ?? account.email,
+		accountUuid: claudeCode?.accountUuid ?? account.accountUuid,
+		organizationId: claudeCode?.organizationId,
+	};
 }
 
 /** Terminal identifier comparable to Claude Code's `terminal.type`. */
@@ -113,14 +134,15 @@ export function detectEntrypoint(
 }
 
 /**
- * Organization identifier for the `organization.id` attribute. pi has no organization concept, so
- * this comes from configuration only; it is never guessed from an email domain.
+ * Organization identifier for the `organization.id` attribute. pi has no organization concept, so it
+ * comes from configuration or the adopted Claude Code account; it is never guessed from an email domain.
  */
 export function resolveOrganizationId(
 	configured: string | undefined,
 	env: Record<string, string | undefined> = process.env,
+	discovered?: string | undefined,
 ): string | undefined {
-	const candidates = [configured, env["CLAUDE_CODE_ORGANIZATION_ID"]];
+	const candidates = [configured, env["CLAUDE_CODE_ORGANIZATION_ID"], discovered];
 	for (const candidate of candidates) {
 		if (candidate && candidate.trim().length > 0) return candidate.trim();
 	}
