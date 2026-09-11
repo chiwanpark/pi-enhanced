@@ -74,50 +74,43 @@ function sanitizeAttributes(attributes: Record<string, unknown>): Attributes {
 	return result;
 }
 
-async function createOtlpMetricExporter(config: OtelExporterConfig): Promise<PushMetricExporter> {
-	const protocol = resolveSignalProtocol(config, "metrics");
-	const url = resolveSignalEndpoint(config, "metrics");
-	const headers = resolveSignalHeaders(config, "metrics");
-	const temporalityPreference =
-		config.temporalityPreference === "cumulative" ? AggregationTemporality.CUMULATIVE : AggregationTemporality.DELTA;
-	const options = {
+function signalOptions(config: OtelExporterConfig, signal: "metrics" | "logs") {
+	const url = resolveSignalEndpoint(config, signal);
+	const headers = resolveSignalHeaders(config, signal);
+	return {
 		...(url ? { url } : {}),
 		...(Object.keys(headers).length > 0 ? { headers } : {}),
-		temporalityPreference,
+	};
+}
+
+async function createOtlpMetricExporter(config: OtelExporterConfig): Promise<PushMetricExporter> {
+	const options = {
+		...signalOptions(config, "metrics"),
+		temporalityPreference:
+			config.temporalityPreference === "cumulative" ? AggregationTemporality.CUMULATIVE : AggregationTemporality.DELTA,
 	};
 
-	if (protocol === "grpc") {
-		const { OTLPMetricExporter } = await import("@opentelemetry/exporter-metrics-otlp-grpc");
-		return new OTLPMetricExporter(options);
+	switch (resolveSignalProtocol(config, "metrics")) {
+		case "grpc":
+			return new (await import("@opentelemetry/exporter-metrics-otlp-grpc")).OTLPMetricExporter(options);
+		case "http/json":
+			return new (await import("@opentelemetry/exporter-metrics-otlp-http")).OTLPMetricExporter(options);
+		default:
+			return new (await import("@opentelemetry/exporter-metrics-otlp-proto")).OTLPMetricExporter(options);
 	}
-	if (protocol === "http/json") {
-		const { OTLPMetricExporter } = await import("@opentelemetry/exporter-metrics-otlp-http");
-		return new OTLPMetricExporter(options);
-	}
-	const { OTLPMetricExporter } = await import("@opentelemetry/exporter-metrics-otlp-proto");
-	return new OTLPMetricExporter(options);
 }
 
 async function createOtlpLogProcessor(config: OtelExporterConfig): Promise<LogRecordProcessor> {
-	const protocol = resolveSignalProtocol(config, "logs");
-	const url = resolveSignalEndpoint(config, "logs");
-	const headers = resolveSignalHeaders(config, "logs");
-	const options = {
-		...(url ? { url } : {}),
-		...(Object.keys(headers).length > 0 ? { headers } : {}),
-	};
-
+	const options = signalOptions(config, "logs");
 	const exporter = await (async () => {
-		if (protocol === "grpc") {
-			const { OTLPLogExporter } = await import("@opentelemetry/exporter-logs-otlp-grpc");
-			return new OTLPLogExporter(options);
+		switch (resolveSignalProtocol(config, "logs")) {
+			case "grpc":
+				return new (await import("@opentelemetry/exporter-logs-otlp-grpc")).OTLPLogExporter(options);
+			case "http/json":
+				return new (await import("@opentelemetry/exporter-logs-otlp-http")).OTLPLogExporter(options);
+			default:
+				return new (await import("@opentelemetry/exporter-logs-otlp-proto")).OTLPLogExporter(options);
 		}
-		if (protocol === "http/json") {
-			const { OTLPLogExporter } = await import("@opentelemetry/exporter-logs-otlp-http");
-			return new OTLPLogExporter(options);
-		}
-		const { OTLPLogExporter } = await import("@opentelemetry/exporter-logs-otlp-proto");
-		return new OTLPLogExporter(options);
 	})();
 
 	return new BatchLogRecordProcessor({ exporter, scheduledDelayMillis: config.logsExportIntervalMillis });

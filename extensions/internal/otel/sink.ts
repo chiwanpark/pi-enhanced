@@ -18,30 +18,19 @@ export interface TelemetrySink {
 
 /**
  * Create a sink that records calls immediately and forwards them once the SDK module is loaded.
- * The dynamic import keeps the OpenTelemetry packages out of the startup path of every pi run.
+ * The dynamic import keeps the OpenTelemetry packages out of the startup path of every pi run, and
+ * chaining on the load promise replays calls in the order they were made.
  */
 export function createTelemetrySink(init: TelemetryInit): TelemetrySink {
-	let telemetry: OtelTelemetry | undefined;
-	const queue: ((target: OtelTelemetry) => void)[] = [];
-
-	const ready = (async () => {
-		try {
-			const { OtelTelemetry: Telemetry } = await import("./telemetry.ts");
-			const created = new Telemetry(init);
-			telemetry = created;
-			for (const task of queue.splice(0)) task(created);
-		} catch (error) {
-			queue.length = 0;
+	const ready = import("./telemetry.ts")
+		.then(({ OtelTelemetry: Telemetry }) => new Telemetry(init))
+		.catch((error: unknown) => {
 			init.onError?.(`telemetry sdk unavailable: ${error instanceof Error ? error.message : String(error)}`);
-		}
-	})();
+			return undefined;
+		});
 
 	function run(task: (target: OtelTelemetry) => void): void {
-		if (telemetry) {
-			task(telemetry);
-			return;
-		}
-		queue.push(task);
+		void ready.then((target) => target && task(target));
 	}
 
 	return {
@@ -60,12 +49,10 @@ export function createTelemetrySink(init: TelemetryInit): TelemetrySink {
 			run((target) => target.emitEvent(name, extra, timestampMs));
 		},
 		forceFlush: async () => {
-			await ready;
-			await telemetry?.forceFlush();
+			await (await ready)?.forceFlush();
 		},
 		shutdown: async () => {
-			await ready;
-			await telemetry?.shutdown();
+			await (await ready)?.shutdown();
 		},
 	};
 }

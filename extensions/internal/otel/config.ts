@@ -275,11 +275,12 @@ export function applyEnv(config: OtelExporterConfig, env: OtelEnv): OtelExporter
 			parseBoolean(env["OTEL_METRICS_INCLUDE_RESOURCE_ATTRIBUTES"]) ?? next.include.resourceAttributes,
 	};
 
-	const logUserPrompts = parseBoolean(env["OTEL_LOG_USER_PROMPTS"]) ?? next.content.logUserPrompts;
+	const logUserPrompts = parseBoolean(env["OTEL_LOG_USER_PROMPTS"]);
 	next.content = {
-		logUserPrompts,
+		logUserPrompts: logUserPrompts ?? next.content.logUserPrompts,
 		// Claude Code falls back to OTEL_LOG_USER_PROMPTS when OTEL_LOG_ASSISTANT_RESPONSES is unset.
-		logAssistantResponses: parseBoolean(env["OTEL_LOG_ASSISTANT_RESPONSES"]) ?? logUserPrompts,
+		logAssistantResponses:
+			parseBoolean(env["OTEL_LOG_ASSISTANT_RESPONSES"]) ?? logUserPrompts ?? next.content.logAssistantResponses,
 		logToolDetails: parseBoolean(env["OTEL_LOG_TOOL_DETAILS"]) ?? next.content.logToolDetails,
 		maxLength: parsePositiveInteger(env["CLAUDE_CODE_OTEL_CONTENT_MAX_LENGTH"]) ?? next.content.maxLength,
 	};
@@ -330,15 +331,37 @@ type OtelSettings = {
 	events?: unknown;
 };
 
-function stringRecord(value: unknown): Record<string, string> | undefined {
-	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
-	const result: Record<string, string> = {};
-	for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
-		if (typeof entry === "string") result[key] = entry;
-		else if (typeof entry === "number" || typeof entry === "boolean") result[key] = String(entry);
-	}
-	return result;
-}
+const SETTINGS_ENV_KEYS: Record<string, string> = {
+	enabled: "CLAUDE_CODE_ENABLE_TELEMETRY",
+	serviceName: "OTEL_SERVICE_NAME",
+	organizationId: "CLAUDE_CODE_ORGANIZATION_ID",
+	metricsExporter: "OTEL_METRICS_EXPORTER",
+	logsExporter: "OTEL_LOGS_EXPORTER",
+	protocol: "OTEL_EXPORTER_OTLP_PROTOCOL",
+	metricsProtocol: "OTEL_EXPORTER_OTLP_METRICS_PROTOCOL",
+	logsProtocol: "OTEL_EXPORTER_OTLP_LOGS_PROTOCOL",
+	endpoint: "OTEL_EXPORTER_OTLP_ENDPOINT",
+	metricsEndpoint: "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+	logsEndpoint: "OTEL_EXPORTER_OTLP_LOGS_ENDPOINT",
+	headers: "OTEL_EXPORTER_OTLP_HEADERS",
+	metricsHeaders: "OTEL_EXPORTER_OTLP_METRICS_HEADERS",
+	logsHeaders: "OTEL_EXPORTER_OTLP_LOGS_HEADERS",
+	metricExportIntervalMillis: "OTEL_METRIC_EXPORT_INTERVAL",
+	logsExportIntervalMillis: "OTEL_LOGS_EXPORT_INTERVAL",
+	temporalityPreference: "OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE",
+	prometheusHost: "OTEL_EXPORTER_PROMETHEUS_HOST",
+	prometheusPort: "OTEL_EXPORTER_PROMETHEUS_PORT",
+	resourceAttributes: "OTEL_RESOURCE_ATTRIBUTES",
+	includeSessionId: "OTEL_METRICS_INCLUDE_SESSION_ID",
+	includeVersion: "OTEL_METRICS_INCLUDE_VERSION",
+	includeEntrypoint: "OTEL_METRICS_INCLUDE_ENTRYPOINT",
+	includeAccountUuid: "OTEL_METRICS_INCLUDE_ACCOUNT_UUID",
+	includeResourceAttributes: "OTEL_METRICS_INCLUDE_RESOURCE_ATTRIBUTES",
+	logUserPrompts: "OTEL_LOG_USER_PROMPTS",
+	logAssistantResponses: "OTEL_LOG_ASSISTANT_RESPONSES",
+	logToolDetails: "OTEL_LOG_TOOL_DETAILS",
+	contentMaxLength: "CLAUDE_CODE_OTEL_CONTENT_MAX_LENGTH",
+};
 
 function toggleRecord<T extends string>(
 	value: unknown,
@@ -358,105 +381,49 @@ function toggleRecord<T extends string>(
 	return next;
 }
 
-function exporterList<T extends string>(value: unknown, allowed: readonly T[]): T[] | undefined {
-	if (typeof value === "string") return parseExporterList(value, allowed);
-	if (!Array.isArray(value)) return undefined;
-	const entries = value.filter((entry): entry is string => typeof entry === "string");
-	return parseExporterList(entries.join(","), allowed);
+function settingAsEnvValue(value: unknown): string | undefined {
+	if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return String(value);
+	if (Array.isArray(value)) return value.filter((entry) => typeof entry === "string").join(",");
+	if (!value || typeof value !== "object") return undefined;
+	const pairs: string[] = [];
+	for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+		if (typeof entry !== "string" && typeof entry !== "number" && typeof entry !== "boolean") continue;
+		pairs.push(`${key}=${encodeURIComponent(String(entry))}`);
+	}
+	return pairs.join(",");
 }
 
+/**
+ * The settings keys that mean exactly what an environment variable means, rendered in the string
+ * form that variable would carry so `applyEnv` parses both through the same path.
+ */
+export function settingsAsEnv(settings: OtelSettings): OtelEnv {
+	const env: OtelEnv = {};
+	for (const [key, variable] of Object.entries(SETTINGS_ENV_KEYS)) {
+		const value = settingAsEnvValue((settings as Record<string, unknown>)[key]);
+		if (value !== undefined) env[variable] = value;
+	}
+	return env;
+}
+
+/**
+ * Apply one settings section. Everything with an environment equivalent goes through `applyEnv`, so
+ * a key cannot mean one thing in the environment and another in `settings.json`; the pi-specific
+ * keys, which have no variable, are read here.
+ */
 function applySettings(config: OtelExporterConfig, settings: OtelSettings | undefined): OtelExporterConfig {
 	if (!settings) return config;
-	const next = { ...config };
+	const next = applyEnv(config, settingsAsEnv(settings));
 
-	if (typeof settings.enabled === "boolean") next.enabled = settings.enabled;
 	if (typeof settings.discoverClaudeCodeSettings === "boolean") {
 		next.discoverClaudeCodeSettings = settings.discoverClaudeCodeSettings;
 	}
-	if (typeof settings.useClaudeCodeIdentity === "boolean") {
-		next.useClaudeCodeIdentity = settings.useClaudeCodeIdentity;
-	}
+	if (typeof settings.useClaudeCodeIdentity === "boolean") next.useClaudeCodeIdentity = settings.useClaudeCodeIdentity;
 	if (typeof settings.restrictToAnthropicProvider === "boolean") {
 		next.restrictToAnthropicProvider = settings.restrictToAnthropicProvider;
 	}
-	if (typeof settings.organizationId === "string") {
-		next.organizationId = trimmedString(settings.organizationId) ?? next.organizationId;
-	}
-	if (typeof settings.includeHostAttributes === "boolean") {
-		next.includeHostAttributes = settings.includeHostAttributes;
-	}
-	if (typeof settings.primeMetricSeries === "boolean") {
-		next.primeMetricSeries = settings.primeMetricSeries;
-	}
-	const serviceName = typeof settings.serviceName === "string" ? trimmedString(settings.serviceName) : undefined;
-	if (serviceName) next.serviceName = serviceName;
-
-	next.metricsExporters = exporterList(settings.metricsExporter, METRICS_EXPORTERS) ?? next.metricsExporters;
-	next.logsExporters = exporterList(settings.logsExporter, LOGS_EXPORTERS) ?? next.logsExporters;
-
-	if (typeof settings.protocol === "string") next.protocol = parseProtocol(settings.protocol) ?? next.protocol;
-	if (typeof settings.metricsProtocol === "string") {
-		next.metricsProtocol = parseProtocol(settings.metricsProtocol) ?? next.metricsProtocol;
-	}
-	if (typeof settings.logsProtocol === "string") {
-		next.logsProtocol = parseProtocol(settings.logsProtocol) ?? next.logsProtocol;
-	}
-
-	if (typeof settings.endpoint === "string") next.endpoint = trimmedString(settings.endpoint) ?? next.endpoint;
-	if (typeof settings.metricsEndpoint === "string") {
-		next.metricsEndpoint = trimmedString(settings.metricsEndpoint) ?? next.metricsEndpoint;
-	}
-	if (typeof settings.logsEndpoint === "string") {
-		next.logsEndpoint = trimmedString(settings.logsEndpoint) ?? next.logsEndpoint;
-	}
-
-	next.headers = { ...next.headers, ...(stringRecord(settings.headers) ?? {}) };
-	next.metricsHeaders = { ...next.metricsHeaders, ...(stringRecord(settings.metricsHeaders) ?? {}) };
-	next.logsHeaders = { ...next.logsHeaders, ...(stringRecord(settings.logsHeaders) ?? {}) };
-	next.resourceAttributes = { ...next.resourceAttributes, ...(stringRecord(settings.resourceAttributes) ?? {}) };
-
-	if (typeof settings.metricExportIntervalMillis === "number" && settings.metricExportIntervalMillis > 0) {
-		next.metricExportIntervalMillis = Math.floor(settings.metricExportIntervalMillis);
-	}
-	if (typeof settings.logsExportIntervalMillis === "number" && settings.logsExportIntervalMillis > 0) {
-		next.logsExportIntervalMillis = Math.floor(settings.logsExportIntervalMillis);
-	}
-	if (typeof settings.temporalityPreference === "string") {
-		next.temporalityPreference = parseTemporality(settings.temporalityPreference) ?? next.temporalityPreference;
-	}
-	if (typeof settings.prometheusPort === "number" && settings.prometheusPort > 0) {
-		next.prometheusPort = Math.floor(settings.prometheusPort);
-	}
-	if (typeof settings.prometheusHost === "string") {
-		next.prometheusHost = trimmedString(settings.prometheusHost) ?? next.prometheusHost;
-	}
-
-	next.include = {
-		sessionId: typeof settings.includeSessionId === "boolean" ? settings.includeSessionId : next.include.sessionId,
-		version: typeof settings.includeVersion === "boolean" ? settings.includeVersion : next.include.version,
-		entrypoint: typeof settings.includeEntrypoint === "boolean" ? settings.includeEntrypoint : next.include.entrypoint,
-		accountUuid:
-			typeof settings.includeAccountUuid === "boolean" ? settings.includeAccountUuid : next.include.accountUuid,
-		resourceAttributes:
-			typeof settings.includeResourceAttributes === "boolean"
-				? settings.includeResourceAttributes
-				: next.include.resourceAttributes,
-	};
-
-	next.content = {
-		logUserPrompts:
-			typeof settings.logUserPrompts === "boolean" ? settings.logUserPrompts : next.content.logUserPrompts,
-		logAssistantResponses:
-			typeof settings.logAssistantResponses === "boolean"
-				? settings.logAssistantResponses
-				: next.content.logAssistantResponses,
-		logToolDetails:
-			typeof settings.logToolDetails === "boolean" ? settings.logToolDetails : next.content.logToolDetails,
-		maxLength:
-			typeof settings.contentMaxLength === "number" && settings.contentMaxLength > 0
-				? Math.floor(settings.contentMaxLength)
-				: next.content.maxLength,
-	};
+	if (typeof settings.includeHostAttributes === "boolean") next.includeHostAttributes = settings.includeHostAttributes;
+	if (typeof settings.primeMetricSeries === "boolean") next.primeMetricSeries = settings.primeMetricSeries;
 
 	next.metrics = toggleRecord(settings.metrics, next.metrics, METRIC_SIGNALS);
 	next.events = toggleRecord(settings.events, next.events, EVENT_SIGNALS);

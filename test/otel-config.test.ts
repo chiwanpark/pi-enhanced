@@ -161,6 +161,34 @@ test("per-signal headers merge with the generic headers", () => {
 	assert.deepEqual(resolveSignalHeaders(config, "metrics"), { Authorization: "Bearer base" });
 });
 
+test("settings values survive the environment form they are parsed through", () => {
+	const config = build({ OTEL_EXPORTER_OTLP_HEADERS: "x-env=1" }, [
+		{
+			otelExporter: {
+				headers: { Authorization: "Bearer a=b,c" },
+				resourceAttributes: { "team.id": "core,platform" },
+				metricsExporter: ["otlp", "console"],
+				metricExportIntervalMillis: 5000,
+				includeVersion: true,
+			},
+		},
+	]);
+	assert.deepEqual(config.headers, { "x-env": "1", Authorization: "Bearer a=b,c" });
+	assert.deepEqual(config.resourceAttributes, { "team.id": "core,platform" });
+	assert.deepEqual(config.metricsExporters, ["otlp", "console"]);
+	assert.equal(config.metricExportIntervalMillis, 5000);
+	assert.equal(config.include.version, true);
+});
+
+test("a settings section leaves content flags it does not mention alone", () => {
+	const config = build({ OTEL_LOG_USER_PROMPTS: "1", OTEL_LOG_ASSISTANT_RESPONSES: "0" }, [
+		{ otelExporter: { logToolDetails: true } },
+	]);
+	assert.equal(config.content.logUserPrompts, true);
+	assert.equal(config.content.logAssistantResponses, false);
+	assert.equal(config.content.logToolDetails, true);
+});
+
 test("export intervals and content limits use claude code defaults", () => {
 	const config = build();
 	assert.equal(config.metricExportIntervalMillis, 60_000);
