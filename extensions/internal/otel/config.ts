@@ -140,7 +140,7 @@ function defaultConfig(defaults: OtelConfigDefaults = {}): OtelExporterConfig {
 		logsHeaders: {},
 		metricExportIntervalMillis: DEFAULT_METRIC_EXPORT_INTERVAL_MS,
 		logsExportIntervalMillis: DEFAULT_LOGS_EXPORT_INTERVAL_MS,
-		temporalityPreference: "cumulative",
+		temporalityPreference: "delta",
 		prometheusHost: DEFAULT_PROMETHEUS_HOST,
 		prometheusPort: DEFAULT_PROMETHEUS_PORT,
 		resourceAttributes: {},

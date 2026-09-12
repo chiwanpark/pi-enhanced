@@ -194,18 +194,18 @@ test("export intervals and content limits use claude code defaults", () => {
 	assert.equal(config.metricExportIntervalMillis, 60_000);
 	assert.equal(config.logsExportIntervalMillis, 5_000);
 	assert.equal(config.content.maxLength, 61_440);
-	assert.equal(config.temporalityPreference, "cumulative");
+	assert.equal(config.temporalityPreference, "delta");
 
 	const tuned = build({
 		OTEL_METRIC_EXPORT_INTERVAL: "5000",
 		OTEL_LOGS_EXPORT_INTERVAL: "1000",
 		CLAUDE_CODE_OTEL_CONTENT_MAX_LENGTH: "262144",
-		OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE: "delta",
+		OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE: "cumulative",
 	});
 	assert.equal(tuned.metricExportIntervalMillis, 5_000);
 	assert.equal(tuned.logsExportIntervalMillis, 1_000);
 	assert.equal(tuned.content.maxLength, 262_144);
-	assert.equal(tuned.temporalityPreference, "delta");
+	assert.equal(tuned.temporalityPreference, "cumulative");
 });
 
 test("resource attributes come from the standard variable and settings", () => {

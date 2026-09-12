@@ -93,7 +93,7 @@ It also reports the identity Claude Code reports: `user.id` is the anonymous ins
 
 Metric datapoints carry the Claude Code attribute set, so pi's series line up with the ones Claude Code produces. Every series is published once with a zero value at session start so dashboard panels resolve before the first matching action. Set `otelExporter.primeMetricSeries` to `false` to export only real activity.
 
-Metrics are exported with cumulative temporality, which republishes every series on each export interval and keeps panels populated through an idle session. Set `otelExporter.temporalityPreference` to `"delta"` for Claude Code's default, which reports a series only in the interval where it changed.
+Metrics are exported with delta temporality, Claude Code's default, so a collector built for it sums the increments it receives. Set `otelExporter.temporalityPreference` to `"cumulative"` only when the backend expects cumulative sums; a backend that sums deltas counts a cumulative series again on every export interval.
 
 ### Events
 
@@ -147,7 +147,7 @@ Project settings override global settings.
   - `headers`, `metricsHeaders`, `logsHeaders`: Header objects merged onto the generic headers for that signal.
   - `metricExportIntervalMillis`: Metric export interval (default: 60000).
   - `logsExportIntervalMillis`: Log batch delay (default: 5000).
-  - `temporalityPreference`: `"delta"` or `"cumulative"` (default: `"cumulative"`).
+  - `temporalityPreference`: `"delta"` or `"cumulative"` (default: `"delta"`).
   - `prometheusHost`, `prometheusPort`: Scrape endpoint for the Prometheus exporter (default: `"localhost"`, 9464).
   - `resourceAttributes`: Extra attributes merged with `OTEL_RESOURCE_ATTRIBUTES`.
   - `organizationId`: Value of the `organization.id` attribute, the equivalent of `CLAUDE_CODE_ORGANIZATION_ID`. Never guessed from the user's email (default: unset).
