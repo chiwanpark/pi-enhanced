@@ -7,9 +7,11 @@ import {
 	detectTerminalType,
 	readAccountIdentity,
 	resolveOrganizationId,
+	taggedAccountId,
 } from "../extensions/internal/otel/identity.ts";
 
-const identity = { userId: "anon-1", email: "dev@example.com", accountUuid: "acct-9", organizationId: undefined };
+const ACCOUNT_UUID = "ce981faa-6215-4839-84d4-5435845a6352";
+const identity = { userId: "anon-1", email: "dev@example.com", accountUuid: ACCOUNT_UUID, organizationId: undefined };
 
 function attributes(env: OtelEnv = {}) {
 	return buildStandardAttributes({
@@ -22,53 +24,48 @@ function attributes(env: OtelEnv = {}) {
 	});
 }
 
-test("events always carry the full standard attribute set", () => {
-	const { events } = attributes();
-	assert.equal(events["session.id"], "session-1");
-	assert.equal(events["app.version"], "1.2.3");
-	assert.equal(events["app.entrypoint"], "cli");
-	assert.equal(events["user.id"], "anon-1");
-	assert.equal(events["user.email"], "dev@example.com");
-	assert.equal(events["user.account_uuid"], "acct-9");
-	assert.equal(events["user.account_id"], "acct-9");
-	assert.equal(events["terminal.type"], "tmux");
+test("the standard attribute set follows the claude code cardinality defaults", () => {
+	const standard = attributes();
+	assert.equal(standard["session.id"], "session-1");
+	assert.equal(standard["user.id"], "anon-1");
+	assert.equal(standard["user.email"], "dev@example.com");
+	assert.equal(standard["user.account_uuid"], ACCOUNT_UUID);
+	assert.equal(standard["terminal.type"], "tmux");
+	assert.equal("app.version" in standard, false);
+	assert.equal("app.entrypoint" in standard, false);
 });
 
-test("metric attributes honour the cardinality defaults", () => {
-	const { metrics } = attributes();
-	assert.equal(metrics["session.id"], "session-1");
-	assert.equal(metrics["user.account_uuid"], "acct-9");
-	assert.equal("app.version" in metrics, false);
-	assert.equal("app.entrypoint" in metrics, false);
+test("user.account_id is the claude code typed id, not the raw uuid", () => {
+	assert.equal(attributes()["user.account_id"], "user_01SWeTu6bba167t5S7FHQ1us");
+	assert.equal(taggedAccountId("00000000-0000-0000-0000-000000000001"), "user_011111111111111111111112");
+	assert.equal(taggedAccountId("ffffffff-ffff-ffff-ffff-ffffffffffff"), "user_01YcVfxkQb6JRzqk5kF2tNLv");
+	assert.equal(taggedAccountId("not-a-uuid"), undefined);
+	assert.equal(taggedAccountId(undefined), undefined);
 });
 
-test("cardinality controls can drop session id and account attributes from metrics", () => {
-	const { metrics, events } = attributes({
+test("cardinality controls apply to the whole set, as they do in claude code", () => {
+	const standard = attributes({
 		OTEL_METRICS_INCLUDE_SESSION_ID: "false",
 		OTEL_METRICS_INCLUDE_ACCOUNT_UUID: "false",
 		OTEL_METRICS_INCLUDE_VERSION: "true",
 		OTEL_METRICS_INCLUDE_ENTRYPOINT: "true",
 	});
-	assert.equal("session.id" in metrics, false);
-	assert.equal("user.account_uuid" in metrics, false);
-	assert.equal(metrics["app.version"], "1.2.3");
-	assert.equal(metrics["app.entrypoint"], "cli");
-	// Events are unaffected by the metric cardinality controls.
-	assert.equal(events["session.id"], "session-1");
-	assert.equal(events["user.account_uuid"], "acct-9");
+	assert.equal("session.id" in standard, false);
+	assert.equal("user.account_uuid" in standard, false);
+	assert.equal("user.account_id" in standard, false);
+	assert.equal(standard["app.version"], "1.2.3");
+	assert.equal(standard["app.entrypoint"], "cli");
 });
 
-test("resource attributes reach metrics only while enabled", () => {
+test("resource attributes are stamped on datapoints only while enabled", () => {
 	const included = attributes({ OTEL_RESOURCE_ATTRIBUTES: "department=eng" });
-	assert.equal(included.metrics["department"], "eng");
-	assert.equal(included.events["department"], "eng");
+	assert.equal(included["department"], "eng");
 
 	const excluded = attributes({
 		OTEL_RESOURCE_ATTRIBUTES: "department=eng",
 		OTEL_METRICS_INCLUDE_RESOURCE_ATTRIBUTES: "false",
 	});
-	assert.equal("department" in excluded.metrics, false);
-	assert.equal(excluded.events["department"], "eng");
+	assert.equal("department" in excluded, false);
 });
 
 test("anthropic and gemini accounts resolve offline from auth data", () => {
@@ -106,8 +103,8 @@ test("organization id comes from configuration only", () => {
 	assert.equal(resolveOrganizationId("  ", {}), undefined);
 });
 
-test("organization id reaches metrics and events when set", () => {
-	const { metrics, events } = buildStandardAttributes({
+test("organization id reaches the standard set when set", () => {
+	const standard = buildStandardAttributes({
 		config: buildOtelConfig({}, []),
 		sessionId: "session-1",
 		appVersion: "1.2.3",
@@ -116,6 +113,6 @@ test("organization id reaches metrics and events when set", () => {
 		terminalType: undefined,
 		organizationId: "org-7",
 	});
-	assert.equal(metrics["organization.id"], "org-7");
-	assert.equal(events["organization.id"], "org-7");
+	assert.equal(standard["organization.id"], "org-7");
+	assert.equal("terminal.type" in standard, false);
 });

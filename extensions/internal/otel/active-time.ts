@@ -1,31 +1,31 @@
-export const DEFAULT_IDLE_THRESHOLD_MS = 60_000;
+export const USER_ACTIVITY_TIMEOUT_MS = 5_000;
 
 export interface ActiveTimeOptions {
-	/** Gaps longer than this are treated as idle and dropped, like Claude Code's active-time metric. */
-	idleThresholdMs?: number;
+	userActivityTimeoutMs?: number;
 }
 
 /**
- * Accumulates user and CLI active time. `noteUserActivity` credits the gap since the previous
- * interaction when it is short enough to count as continuous work; CLI spans are measured directly.
+ * Accumulates user and CLI active time the way Claude Code does. `noteUserActivity` credits the gap
+ * since the previous keystroke or submit while it is short and the CLI is idle; CLI spans run from
+ * the first operation start to the last operation end.
  */
 export class ActiveTimeTracker {
-	private readonly idleThresholdMs: number;
+	private readonly userActivityTimeoutMs: number;
 	private lastUserActivityMs: number | undefined;
 	private cliStartMs: number | undefined;
 	private cliDepth = 0;
 
 	constructor(options: ActiveTimeOptions = {}) {
-		this.idleThresholdMs = options.idleThresholdMs ?? DEFAULT_IDLE_THRESHOLD_MS;
+		this.userActivityTimeoutMs = options.userActivityTimeoutMs ?? USER_ACTIVITY_TIMEOUT_MS;
 	}
 
 	/** Returns the user-active seconds to record for this interaction. */
 	noteUserActivity(nowMs: number): number {
 		const previous = this.lastUserActivityMs;
 		this.lastUserActivityMs = nowMs;
-		if (previous === undefined) return 0;
+		if (previous === undefined || this.cliDepth > 0) return 0;
 		const elapsed = nowMs - previous;
-		if (elapsed <= 0 || elapsed > this.idleThresholdMs) return 0;
+		if (elapsed <= 0 || elapsed >= this.userActivityTimeoutMs) return 0;
 		return elapsed / 1000;
 	}
 
@@ -41,7 +41,6 @@ export class ActiveTimeTracker {
 		if (this.cliDepth > 0) return 0;
 		const start = this.cliStartMs;
 		this.cliStartMs = undefined;
-		this.lastUserActivityMs = nowMs;
 		if (start === undefined) return 0;
 		const elapsed = nowMs - start;
 		return elapsed > 0 ? elapsed / 1000 : 0;

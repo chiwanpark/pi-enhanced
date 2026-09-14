@@ -77,8 +77,6 @@ export interface OtelExporterConfig {
 	organizationId: string | undefined;
 	/** Attach `os.*` and `host.*` resource attributes for fleet-level grouping. */
 	includeHostAttributes: boolean;
-	/** Publish every metric series with a zero value at session start so dashboards find them. */
-	primeMetricSeries: boolean;
 	/**
 	 * Export only requests to the first-party Anthropic API, excluding gateways and resellers.
 	 * Defaults to true once the configuration is discovered from Claude Code.
@@ -124,7 +122,6 @@ function defaultConfig(defaults: OtelConfigDefaults = {}): OtelExporterConfig {
 		useClaudeCodeIdentity: defaults.useClaudeCodeIdentity ?? false,
 		organizationId: undefined,
 		includeHostAttributes: true,
-		primeMetricSeries: true,
 		restrictToAnthropicProvider: defaults.restrictToAnthropicProvider ?? false,
 		serviceName: defaults.serviceName ?? DEFAULT_SERVICE_NAME,
 		metricsExporters: [],
@@ -298,7 +295,6 @@ type OtelSettings = {
 	useClaudeCodeIdentity?: unknown;
 	organizationId?: unknown;
 	includeHostAttributes?: unknown;
-	primeMetricSeries?: unknown;
 	restrictToAnthropicProvider?: unknown;
 	serviceName?: unknown;
 	metricsExporter?: unknown;
@@ -423,7 +419,6 @@ function applySettings(config: OtelExporterConfig, settings: OtelSettings | unde
 		next.restrictToAnthropicProvider = settings.restrictToAnthropicProvider;
 	}
 	if (typeof settings.includeHostAttributes === "boolean") next.includeHostAttributes = settings.includeHostAttributes;
-	if (typeof settings.primeMetricSeries === "boolean") next.primeMetricSeries = settings.primeMetricSeries;
 
 	next.metrics = toggleRecord(settings.metrics, next.metrics, METRIC_SIGNALS);
 	next.events = toggleRecord(settings.events, next.events, EVENT_SIGNALS);

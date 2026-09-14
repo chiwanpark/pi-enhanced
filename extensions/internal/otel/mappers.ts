@@ -85,15 +85,14 @@ const FILENAME_LANGUAGES: Record<string, string> = {
 	".env": "Properties",
 };
 
-/** Claude Code style display language for the `language` attribute, `"unknown"` when unrecognized. */
-export function languageFromPath(filePath: string | undefined): string {
-	if (!filePath) return "unknown";
+export function languageFromPath(filePath: string | undefined): string | undefined {
+	if (!filePath) return undefined;
 	const base = filePath.split(/[\\/]/).pop()?.toLowerCase() ?? "";
 	const byName = FILENAME_LANGUAGES[base];
 	if (byName) return byName;
 	const dot = base.lastIndexOf(".");
-	if (dot <= 0 || dot === base.length - 1) return "unknown";
-	return EXTENSION_LANGUAGES[base.slice(dot + 1)] ?? "unknown";
+	if (dot <= 0 || dot === base.length - 1) return undefined;
+	return EXTENSION_LANGUAGES[base.slice(dot + 1)];
 }
 
 export const ANTHROPIC_PROVIDER = "anthropic";
@@ -127,16 +126,20 @@ export function sessionStartType(reason: string, hasExistingEntries = false): Se
 	}
 }
 
-/** Claude Code's token counter splits usage into four types; pi reports cache writes as `cacheWrite`. */
+/**
+ * Claude Code's token counter records all four types for every response, including empty buckets;
+ * pi reports cache writes as `cacheWrite`.
+ */
 export function tokenUsageEntries(usage: Usage | undefined): { type: TokenType; tokens: number }[] {
 	if (!usage) return [];
-	const entries: { type: TokenType; tokens: number }[] = [
-		{ type: "input", tokens: usage.input },
-		{ type: "output", tokens: usage.output },
-		{ type: "cacheRead", tokens: usage.cacheRead },
-		{ type: "cacheCreation", tokens: usage.cacheWrite },
+	const count = (value: number | undefined) =>
+		Number.isFinite(value) && (value as number) > 0 ? (value as number) : 0;
+	return [
+		{ type: "input", tokens: count(usage.input) },
+		{ type: "output", tokens: count(usage.output) },
+		{ type: "cacheRead", tokens: count(usage.cacheRead) },
+		{ type: "cacheCreation", tokens: count(usage.cacheWrite) },
 	];
-	return entries.filter((entry) => Number.isFinite(entry.tokens) && entry.tokens > 0);
 }
 
 export function costUsdMicros(costUsd: number): number {
@@ -157,64 +160,28 @@ export function diffLineCounts(patch: string | undefined): { added: number; remo
 	return { added, removed };
 }
 
-/** Git global flags that consume the following token, so the subcommand is not the next token. */
-const GIT_VALUE_FLAGS = new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path", "--config-env"]);
-
-/** Split a shell command into invocation token lists, one per `;`, `&&`, `||`, `|`, or newline segment. */
-function commandSegments(command: string): string[][] {
-	const segments: string[][] = [];
-	for (const raw of command.split(/\n|;|&&|\|\||\|/)) {
-		const trimmed = raw.trim().replace(/^[($'"{&\s]+/, "");
-		if (trimmed.length === 0 || trimmed.startsWith("#")) continue;
-		const tokens = trimmed.split(/\s+/).filter((token) => token.length > 0);
-		// Skip leading environment assignments such as `GIT_AUTHOR_NAME=x git commit`.
-		while (tokens.length > 0 && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[0] ?? "")) tokens.shift();
-		if (tokens.length > 0) segments.push(tokens);
-	}
-	return segments;
+function gitSubcommandPattern(subcommand: string): RegExp {
+	return new RegExp(String.raw`\bgit(?:\s+-[cC]\s+\S+|\s+--[^\s=]+=\S+)*\s+${subcommand}\b`);
 }
 
-/** First non-flag token after the executable, honouring flags that take a separate value. */
-function subcommand(tokens: string[]): string | undefined {
-	for (let index = 1; index < tokens.length; index += 1) {
-		const token = tokens[index] ?? "";
-		if (!token.startsWith("-")) return token;
-		if (GIT_VALUE_FLAGS.has(token)) index += 1;
-	}
-	return undefined;
-}
-
-const DRY_RUN_PATTERN = /(?:^|\s)--dry-run(?:[\s=]|$)/;
-const PULL_REQUEST_URL_PATTERN = /https?:\/\/[^\s"'<>]+\/(?:pull|pull-requests|merge_requests)\/\d+/g;
+const GIT_COMMIT_PATTERN = gitSubcommandPattern("commit");
+const PULL_REQUEST_CREATE_PATTERNS = [/\bgh\s+pr\s+create\b/, /\bglab\s+mr\s+create\b/];
 
 /**
- * Whether a bash command tries to create a commit. The count itself comes from comparing `HEAD`
- * before and after the command, so a command that runs but creates nothing is not counted.
+ * Whether a bash command runs `git commit`. Claude Code counts one commit per successful command
+ * that matches, without checking `HEAD`, so this is the same heuristic.
  */
 export function commandCreatesCommit(command: string | undefined): boolean {
-	if (!command || DRY_RUN_PATTERN.test(command)) return false;
-	return commandSegments(command).some(
-		(tokens) => tokens[0]?.split(/[\\/]/).pop() === "git" && subcommand(tokens) === "commit",
-	);
+	return command !== undefined && GIT_COMMIT_PATTERN.test(command);
 }
 
-/** Whether a bash command tries to open a pull or merge request. */
-export function commandCreatesPullRequest(command: string | undefined): boolean {
-	if (!command || DRY_RUN_PATTERN.test(command)) return false;
-	return commandSegments(command).some((tokens) => {
-		const executable = tokens[0]?.split(/[\\/]/).pop();
-		const first = subcommand(tokens);
-		if (executable === "gh") return first === "pr" && tokens.includes("create");
-		if (executable === "glab") return first === "mr" && tokens.includes("create");
-		if (executable === "hub") return first === "pull-request";
-		return false;
-	});
-}
-
-/** Unique pull or merge request URLs printed by a command, which is what actually got created. */
-export function pullRequestUrls(output: string | undefined): string[] {
-	if (!output) return [];
-	return [...new Set(output.match(PULL_REQUEST_URL_PATTERN) ?? [])];
+/**
+ * Pull requests Claude Code counts for a successful bash command: one for `gh pr create` and one
+ * for `glab mr create`, purely from the command text.
+ */
+export function pullRequestsCreated(command: string | undefined): number {
+	if (!command) return 0;
+	return PULL_REQUEST_CREATE_PATTERNS.filter((pattern) => pattern.test(command)).length;
 }
 
 /** pi tool names for the code editing tools tracked by `claude_code.code_edit_tool.decision`. */

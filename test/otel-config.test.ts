@@ -122,17 +122,13 @@ test("a base endpoint that already names the signal keeps a single path", () => 
 	assert.equal(resolveSignalEndpoint(config, "metrics"), "http://collector:4318/v1/metrics");
 });
 
-test("host attributes, priming, and organization id are configurable", () => {
+test("host attributes and organization id are configurable", () => {
 	const defaults = build({});
 	assert.equal(defaults.includeHostAttributes, true);
-	assert.equal(defaults.primeMetricSeries, true);
 	assert.equal(defaults.organizationId, undefined);
 
-	const fromSettings = build({}, [
-		{ otelExporter: { includeHostAttributes: false, primeMetricSeries: false, organizationId: "org-7" } },
-	]);
+	const fromSettings = build({}, [{ otelExporter: { includeHostAttributes: false, organizationId: "org-7" } }]);
 	assert.equal(fromSettings.includeHostAttributes, false);
-	assert.equal(fromSettings.primeMetricSeries, false);
 	assert.equal(fromSettings.organizationId, "org-7");
 
 	// Settings win over the environment, which is the order used for every other key.

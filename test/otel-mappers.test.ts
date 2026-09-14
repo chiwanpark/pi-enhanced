@@ -6,13 +6,12 @@ import {
 	codeEditToolName,
 	costUsdMicros,
 	commandCreatesCommit,
-	commandCreatesPullRequest,
 	diffLineCounts,
 	filePathFromToolInput,
 	isAnthropicProvider,
 	languageFromPath,
+	pullRequestsCreated,
 	serializeToolInput,
-	pullRequestUrls,
 	sessionStartType,
 	tokenUsageEntries,
 	toolErrorType,
@@ -52,10 +51,12 @@ test("token usage splits into the four claude code token types", () => {
 	]);
 });
 
-test("token usage drops empty buckets and undefined usage", () => {
-	assert.deepEqual(tokenUsageEntries(usage({ cacheRead: 0, cacheWrite: 0 })), [
+test("token usage keeps empty buckets like claude code and skips undefined usage", () => {
+	assert.deepEqual(tokenUsageEntries(usage({ cacheRead: 0, cacheWrite: Number.NaN })), [
 		{ type: "input", tokens: 100 },
 		{ type: "output", tokens: 20 },
+		{ type: "cacheRead", tokens: 0 },
+		{ type: "cacheCreation", tokens: 0 },
 	]);
 	assert.deepEqual(tokenUsageEntries(undefined), []);
 });
@@ -82,41 +83,31 @@ test("unified diffs count changed lines without file headers", () => {
 	assert.deepEqual(diffLineCounts(undefined), { added: 0, removed: 0 });
 });
 
-test("commit and pull request commands are detected", () => {
+test("commit commands are detected with claude code's matcher", () => {
 	assert.equal(commandCreatesCommit('git commit -m "feat"'), true);
 	assert.equal(commandCreatesCommit("git -C /tmp/repo commit --amend"), true);
+	assert.equal(commandCreatesCommit("git -c user.name=x --no-pager commit -m x"), false);
+	assert.equal(commandCreatesCommit("git -c user.name=x --git-dir=.git commit -m x"), true);
 	assert.equal(commandCreatesCommit("git add . && git commit -m x"), true);
-	assert.equal(commandCreatesPullRequest("gh pr create --fill"), true);
-	assert.equal(commandCreatesPullRequest("glab mr create"), true);
-	assert.equal(commandCreatesPullRequest("hub pull-request -m x"), true);
+	assert.equal(commandCreatesCommit("git commit --dry-run -m x"), true);
 });
 
 test("commit detection ignores lookalikes", () => {
 	assert.equal(commandCreatesCommit("git log --format=%h"), false);
 	assert.equal(commandCreatesCommit("git revert HEAD"), false);
-	assert.equal(commandCreatesCommit("# git commit -m x"), false);
 	assert.equal(commandCreatesCommit("echo commit"), false);
+	assert.equal(commandCreatesCommit("git committers"), false);
 	assert.equal(commandCreatesCommit(undefined), false);
-	assert.equal(commandCreatesPullRequest("gh pr list"), false);
-	assert.equal(commandCreatesPullRequest(undefined), false);
 });
 
-test("dry runs create nothing", () => {
-	assert.equal(commandCreatesCommit("git commit --dry-run -m x"), false);
-	assert.equal(commandCreatesPullRequest("gh pr create --dry-run"), false);
-});
-
-test("pull request urls are extracted and deduplicated", () => {
-	assert.deepEqual(pullRequestUrls("https://github.com/acme/app/pull/42"), ["https://github.com/acme/app/pull/42"]);
-	assert.deepEqual(pullRequestUrls("https://gitlab.com/acme/app/-/merge_requests/7"), [
-		"https://gitlab.com/acme/app/-/merge_requests/7",
-	]);
-	assert.deepEqual(
-		pullRequestUrls("creating...\nhttps://github.com/acme/app/pull/42\nhttps://github.com/acme/app/pull/42\n"),
-		["https://github.com/acme/app/pull/42"],
-	);
-	assert.deepEqual(pullRequestUrls("https://github.com/acme/app/issues/42"), []);
-	assert.deepEqual(pullRequestUrls(undefined), []);
+test("pull requests count one per gh and glab create command", () => {
+	assert.equal(pullRequestsCreated("gh pr create --fill"), 1);
+	assert.equal(pullRequestsCreated("glab mr create"), 1);
+	assert.equal(pullRequestsCreated("gh pr create && glab mr create"), 2);
+	assert.equal(pullRequestsCreated("gh pr create --dry-run"), 1);
+	assert.equal(pullRequestsCreated("hub pull-request -m x"), 0);
+	assert.equal(pullRequestsCreated("gh pr list"), 0);
+	assert.equal(pullRequestsCreated(undefined), 0);
 });
 
 test("pi tool names map onto claude code code edit tools", () => {
@@ -130,8 +121,8 @@ test("languages use claude code display names", () => {
 	assert.equal(languageFromPath("/tmp/x/script.py"), "Python");
 	assert.equal(languageFromPath("README.md"), "Markdown");
 	assert.equal(languageFromPath("Dockerfile"), "Dockerfile");
-	assert.equal(languageFromPath("notes.unknownext"), "unknown");
-	assert.equal(languageFromPath(undefined), "unknown");
+	assert.equal(languageFromPath("notes.unknownext"), undefined);
+	assert.equal(languageFromPath(undefined), undefined);
 });
 
 test("tool errors collapse into low cardinality categories", () => {

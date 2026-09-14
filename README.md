@@ -80,18 +80,20 @@ It also reports the identity Claude Code reports: `user.id` is the anonymous ins
 
 ### Metrics
 
-| Metric                                | Source in pi                                                                            |
-| ------------------------------------- | --------------------------------------------------------------------------------------- |
-| `claude_code.session.count`           | `session_start`, with `start_type` derived from the session reason and the active model |
-| `claude_code.token.usage`             | Assistant message usage, split into `input`, `output`, `cacheRead`, and `cacheCreation` |
-| `claude_code.cost.usage`              | Assistant message cost total in USD                                                     |
-| `claude_code.lines_of_code.count`     | Lines added and removed, diffed from the file before and after each `edit`/`write`      |
-| `claude_code.commit.count`            | Commits that a bash command actually added to `HEAD`                                    |
-| `claude_code.pull_request.count`      | Pull and merge request urls printed by `gh pr create`, `glab mr create`, or `hub`       |
-| `claude_code.code_edit_tool.decision` | Accepted and guard-rejected `edit`/`write` calls, with the file language                |
-| `claude_code.active_time.total`       | User interaction gaps (`type=user`) and agent run spans (`type=cli`)                    |
+Each metric is computed the way Claude Code computes it, so a dashboard built for Claude Code reads pi's rows without adjustment.
 
-Metric datapoints carry the Claude Code attribute set, so pi's series line up with the ones Claude Code produces. Every series is published once with a zero value at session start so dashboard panels resolve before the first matching action. Set `otelExporter.primeMetricSeries` to `false` to export only real activity.
+| Metric                                | Source in pi                                                                                               |
+| ------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `claude_code.session.count`           | `session_start`, with `start_type` derived from the session reason                                         |
+| `claude_code.token.usage`             | Assistant message usage, split into `input`, `output`, `cacheRead`, and `cacheCreation`                    |
+| `claude_code.cost.usage`              | Assistant message cost total in USD                                                                        |
+| `claude_code.lines_of_code.count`     | Lines added and removed, diffed from the file before and after each `edit`/`write`                         |
+| `claude_code.commit.count`            | One per bash command that runs `git commit` and exits 0, the same heuristic Claude Code applies            |
+| `claude_code.pull_request.count`      | One per bash command that runs `gh pr create` or `glab mr create` and exits 0                              |
+| `claude_code.code_edit_tool.decision` | Accepted and guard-rejected `edit`/`write` calls, with the file language when it is known                  |
+| `claude_code.active_time.total`       | Keystroke gaps shorter than five seconds while the agent is idle (`type=user`) and agent runs (`type=cli`) |
+
+Metric datapoints and events carry the Claude Code standard attribute set (`user.id`, `session.id`, `user.email`, `user.account_uuid`, `user.account_id`, `organization.id`, `terminal.type`), filtered by the same `OTEL_METRICS_INCLUDE_*` controls, and are published under the `com.anthropic.claude_code` instrumentation scopes. Token and cost datapoints carry `model`, `query_source`, and the provider-native `effort` when the response reports one. The resource carries `service.name`, `service.version` (this package's version, which is how pi rows can be told apart from Claude Code rows), `os.type`, `os.version`, and `host.arch`.
 
 Metrics are exported with delta temporality, Claude Code's default, so a collector built for it sums the increments it receives. Set `otelExporter.temporalityPreference` to `"cumulative"` only when the backend expects cumulative sums; a backend that sums deltas counts a cumulative series again on every export interval.
 
@@ -151,9 +153,8 @@ Project settings override global settings.
   - `prometheusHost`, `prometheusPort`: Scrape endpoint for the Prometheus exporter (default: `"localhost"`, 9464).
   - `resourceAttributes`: Extra attributes merged with `OTEL_RESOURCE_ATTRIBUTES`.
   - `organizationId`: Value of the `organization.id` attribute, the equivalent of `CLAUDE_CODE_ORGANIZATION_ID`. Never guessed from the user's email (default: unset).
-  - `includeHostAttributes`: Attach the `os.type`, `os.version`, `host.arch`, and `host.name` resource attributes (default: true).
-  - `primeMetricSeries`: Publish every metric series with a zero value at session start so dashboards find them (default: true).
-  - `includeSessionId`, `includeVersion`, `includeEntrypoint`, `includeAccountUuid`, `includeResourceAttributes`: Metric cardinality controls (defaults: true, false, false, true, true). Events always carry the full attribute set.
+  - `includeHostAttributes`: Attach the `os.type`, `os.version`, and `host.arch` resource attributes (default: true).
+  - `includeSessionId`, `includeVersion`, `includeEntrypoint`, `includeAccountUuid`, `includeResourceAttributes`: Attribute cardinality controls, applied to metrics and events alike as Claude Code does (defaults: true, false, false, true, true).
   - `logUserPrompts`, `logAssistantResponses`, `logToolDetails`: Content opt-ins (default: false). `logAssistantResponses` follows `logUserPrompts` when unset.
   - `contentMaxLength`: Truncation limit for content-bearing attributes (default: 61440).
   - `metrics`: Per-metric toggles, or `false` to disable all of them. Keys: `sessionCount`, `linesOfCode`, `pullRequest`, `commit`, `cost`, `token`, `codeEditToolDecision`, `activeTime` (all default: true).

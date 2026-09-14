@@ -1,7 +1,6 @@
-import os from "node:os";
 import type { Attributes, Counter } from "@opentelemetry/api";
-import { SeverityNumber, type Logger } from "@opentelemetry/api-logs";
-import { resourceFromAttributes } from "@opentelemetry/resources";
+import type { Logger } from "@opentelemetry/api-logs";
+import { hostDetector, osDetector, resourceFromAttributes } from "@opentelemetry/resources";
 import {
 	BatchLogRecordProcessor,
 	ConsoleLogRecordExporter,
@@ -16,7 +15,6 @@ import {
 	type IMetricReader,
 	type PushMetricExporter,
 } from "@opentelemetry/sdk-metrics";
-import type { StandardAttributes } from "./attributes.ts";
 import {
 	resolveSignalEndpoint,
 	resolveSignalHeaders,
@@ -24,7 +22,8 @@ import {
 	type OtelExporterConfig,
 } from "./config.ts";
 
-export const INSTRUMENTATION_SCOPE = "pi-enhanced/otel-exporter";
+export const METER_SCOPE = "com.anthropic.claude_code";
+export const EVENT_LOGGER_SCOPE = "com.anthropic.claude_code.events";
 
 export type EventName =
 	| "user_prompt"
@@ -41,8 +40,7 @@ export type EventName =
 export interface TelemetryInit {
 	config: OtelExporterConfig;
 	serviceVersion: string;
-	/** Standard attributes for metric datapoints and log records. */
-	standardAttributes: StandardAttributes;
+	standardAttributes: Record<string, unknown>;
 	onError?: (message: string) => void;
 }
 
@@ -72,6 +70,10 @@ function sanitizeAttributes(attributes: Record<string, unknown>): Attributes {
 		result[key] = String(value);
 	}
 	return result;
+}
+
+function nonNegative(value: number): number {
+	return Number.isFinite(value) && value > 0 ? value : 0;
 }
 
 function signalOptions(config: OtelExporterConfig, signal: "metrics" | "logs") {
@@ -169,8 +171,7 @@ export class OtelTelemetry {
 	private readonly config: OtelExporterConfig;
 	private readonly serviceVersion: string;
 	private readonly onError: (message: string) => void;
-	private readonly metricAttributeBase: Attributes;
-	private readonly eventAttributeBase: Attributes;
+	private readonly attributeBase: Attributes;
 	private meterProvider: MeterProvider | undefined;
 	private loggerProvider: LoggerProvider | undefined;
 	private logger: Logger | undefined;
@@ -184,23 +185,18 @@ export class OtelTelemetry {
 		this.config = init.config;
 		this.serviceVersion = init.serviceVersion;
 		this.onError = init.onError ?? (() => {});
-		this.metricAttributeBase = sanitizeAttributes(init.standardAttributes.metrics);
-		this.eventAttributeBase = sanitizeAttributes(init.standardAttributes.events);
+		this.attributeBase = sanitizeAttributes(init.standardAttributes);
 		this.readyPromise = this.start();
 	}
 
 	private async start(): Promise<void> {
 		try {
+			const hostArch = hostDetector.detect().attributes?.["host.arch"];
 			const resource = resourceFromAttributes({
 				"service.name": this.config.serviceName,
 				"service.version": this.serviceVersion,
 				...(this.config.includeHostAttributes
-					? {
-							"os.type": process.platform,
-							"os.version": os.release(),
-							"host.arch": process.arch,
-							"host.name": os.hostname(),
-						}
+					? { ...(osDetector.detect().attributes ?? {}), ...(hostArch ? { "host.arch": hostArch } : {}) }
 					: {}),
 				...this.config.resourceAttributes,
 			});
@@ -213,7 +209,7 @@ export class OtelTelemetry {
 			}
 			if (processors.length > 0) {
 				this.loggerProvider = new LoggerProvider({ resource, processors });
-				this.logger = this.loggerProvider.getLogger(INSTRUMENTATION_SCOPE, this.serviceVersion);
+				this.logger = this.loggerProvider.getLogger(EVENT_LOGGER_SCOPE, this.serviceVersion);
 			}
 		} catch (error) {
 			this.onError(`telemetry setup failed: ${error instanceof Error ? error.message : String(error)}`);
@@ -231,7 +227,7 @@ export class OtelTelemetry {
 	}
 
 	private createCounters(meterProvider: MeterProvider): MetricCounters {
-		const meter = meterProvider.getMeter(INSTRUMENTATION_SCOPE, this.serviceVersion);
+		const meter = meterProvider.getMeter(METER_SCOPE, this.serviceVersion);
 		// Prometheus-only scrapes drop units so the exposition format stays valid.
 		const prometheusOnly =
 			this.config.metricsExporters.length === 1 && this.config.metricsExporters[0] === "prometheus";
@@ -239,14 +235,15 @@ export class OtelTelemetry {
 		return {
 			session: meter.createCounter("claude_code.session.count", { description: "Count of CLI sessions started" }),
 			linesOfCode: meter.createCounter("claude_code.lines_of_code.count", {
-				description: "Count of lines of code modified",
+				description:
+					"Count of lines of code modified, with the 'type' attribute indicating whether lines were added or removed and the 'model' attribute indicating which model made the change",
 			}),
 			pullRequest: meter.createCounter("claude_code.pull_request.count", {
 				description: "Number of pull requests created",
 			}),
 			commit: meter.createCounter("claude_code.commit.count", { description: "Number of git commits created" }),
 			cost: meter.createCounter("claude_code.cost.usage", {
-				description: "Cost of the session",
+				description: "Cost of the Claude Code session",
 				...unit("USD"),
 			}),
 			token: meter.createCounter("claude_code.token.usage", {
@@ -254,10 +251,11 @@ export class OtelTelemetry {
 				...unit("tokens"),
 			}),
 			codeEditDecision: meter.createCounter("claude_code.code_edit_tool.decision", {
-				description: "Count of code editing tool permission decisions",
+				description:
+					"Count of code editing tool permission decisions (accept/reject) for Edit, Write, and NotebookEdit tools",
 			}),
 			activeTime: meter.createCounter("claude_code.active_time.total", {
-				description: "Total active time",
+				description: "Total active time in seconds",
 				...unit("s"),
 			}),
 		};
@@ -273,53 +271,17 @@ export class OtelTelemetry {
 	}
 
 	private metricAttributes(extra: Record<string, unknown> = {}): Attributes {
-		return { ...this.metricAttributeBase, ...sanitizeAttributes(extra) };
+		return { ...this.attributeBase, ...sanitizeAttributes(extra) };
 	}
 
-	addSession(startType: string, model: string | undefined): void {
-		const attributes = this.metricAttributes({ start_type: startType, model });
+	addSession(startType: string): void {
+		const attributes = this.metricAttributes({ start_type: startType });
 		this.enqueue(() => this.counters?.session.add(1, attributes));
 	}
 
-	/**
-	 * Publish every metric series with a zero value so dashboard panels resolve before the first
-	 * matching action instead of rendering "No data".
-	 */
-	primeSeries(model: string | undefined, tokenTypes: readonly string[]): void {
-		const lines = (type: string) => this.metricAttributes({ type, model });
-		const request = this.metricAttributes({ model, query_source: "main" });
-		const tokens = tokenTypes.map((type) => this.metricAttributes({ model, query_source: "main", type }));
-		const decision = this.metricAttributes({
-			tool_name: "Edit",
-			decision: "accept",
-			source: "config",
-			language: "unknown",
-		});
-		const plain = this.metricAttributes();
-		const added = lines("added");
-		const removed = lines("removed");
-		const userTime = this.metricAttributes({ type: "user" });
-		const cliTime = this.metricAttributes({ type: "cli" });
-
-		this.enqueue(() => {
-			const counters = this.counters;
-			if (!counters) return;
-			counters.linesOfCode.add(0, added);
-			counters.linesOfCode.add(0, removed);
-			counters.pullRequest.add(0, plain);
-			counters.commit.add(0, plain);
-			counters.cost.add(0, request);
-			for (const attributes of tokens) counters.token.add(0, attributes);
-			counters.codeEditDecision.add(0, decision);
-			counters.activeTime.add(0, userTime);
-			counters.activeTime.add(0, cliTime);
-		});
-	}
-
 	addLinesOfCode(type: "added" | "removed", lines: number, model: string | undefined): void {
-		if (lines <= 0) return;
 		const attributes = this.metricAttributes({ type, model });
-		this.enqueue(() => this.counters?.linesOfCode.add(lines, attributes));
+		this.enqueue(() => this.counters?.linesOfCode.add(nonNegative(lines), attributes));
 	}
 
 	addPullRequests(count: number): void {
@@ -335,15 +297,13 @@ export class OtelTelemetry {
 	}
 
 	addCost(costUsd: number, extra: Record<string, unknown>): void {
-		if (!Number.isFinite(costUsd) || costUsd <= 0) return;
 		const attributes = this.metricAttributes(extra);
-		this.enqueue(() => this.counters?.cost.add(costUsd, attributes));
+		this.enqueue(() => this.counters?.cost.add(nonNegative(costUsd), attributes));
 	}
 
 	addTokens(type: string, tokens: number, extra: Record<string, unknown>): void {
-		if (tokens <= 0) return;
 		const attributes = this.metricAttributes({ ...extra, type });
-		this.enqueue(() => this.counters?.token.add(tokens, attributes));
+		this.enqueue(() => this.counters?.token.add(nonNegative(tokens), attributes));
 	}
 
 	addCodeEditDecision(extra: Record<string, unknown>): void {
@@ -358,10 +318,9 @@ export class OtelTelemetry {
 	}
 
 	emitEvent(name: EventName, extra: Record<string, unknown> = {}, timestampMs?: number): void {
-		this.sequence += 1;
 		const timestamp = timestampMs ?? Date.now();
 		const attributes: Attributes = {
-			...this.eventAttributeBase,
+			...this.attributeBase,
 			...sanitizeAttributes({
 				"event.name": name,
 				"event.timestamp": new Date(timestamp).toISOString(),
@@ -369,12 +328,12 @@ export class OtelTelemetry {
 				...extra,
 			}),
 		};
+		this.sequence += 1;
 		this.enqueue(() =>
 			this.logger?.emit({
-				eventName: `claude_code.${name}`,
+				body: `claude_code.${name}`,
 				timestamp,
-				severityNumber: SeverityNumber.INFO,
-				severityText: "INFO",
+				observedTimestamp: timestamp,
 				attributes,
 			}),
 		);

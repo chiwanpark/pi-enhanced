@@ -1,5 +1,6 @@
 import { CustomEditor, type ExtensionAPI, type KeybindingsManager, type Theme } from "@earendil-works/pi-coding-agent";
 import { type EditorTheme, type TUI } from "@earendil-works/pi-tui";
+import { EDITOR_INPUT_EVENT, type EditorInputActivity } from "./internal/editor-activity";
 import { installThemePatches, loadEditorBgAnsi, styleBlockLine } from "./patch-theme";
 
 const EDITOR_PADDING_X = 1;
@@ -19,12 +20,18 @@ class StyledEditor extends CustomEditor {
 		editorTheme: EditorTheme,
 		keybindings: KeybindingsManager,
 		private readonly getTheme: () => Theme,
+		private readonly onInput: () => void,
 	) {
 		super(tui, editorTheme, keybindings, { paddingX: EDITOR_PADDING_X });
 	}
 
 	override setPaddingX(_padding: number): void {
 		super.setPaddingX(EDITOR_PADDING_X);
+	}
+
+	override handleInput(data: string): void {
+		super.handleInput(data);
+		this.onInput();
 	}
 
 	private styleLine(text: string, width: number): string {
@@ -68,7 +75,13 @@ export default function editorExtension(pi: ExtensionAPI) {
 		installThemePatches(ctx.ui);
 
 		ctx.ui.setEditorComponent((tui, editorTheme, keybindings) => {
-			return new StyledEditor(tui, editorTheme, keybindings, () => ctx.ui.theme);
+			return new StyledEditor(
+				tui,
+				editorTheme,
+				keybindings,
+				() => ctx.ui.theme,
+				() => pi.events.emit(EDITOR_INPUT_EVENT, { at: Date.now() } satisfies EditorInputActivity),
+			);
 		});
 	});
 }

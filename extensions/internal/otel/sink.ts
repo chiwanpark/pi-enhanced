@@ -2,8 +2,7 @@ import type { EventName, OtelTelemetry, TelemetryInit } from "./telemetry.ts";
 
 /** The telemetry surface used by the extension, so the OpenTelemetry SDK can stay behind a lazy import. */
 export interface TelemetrySink {
-	addSession(startType: string, model: string | undefined): void;
-	primeSeries(model: string | undefined, tokenTypes: readonly string[]): void;
+	addSession(startType: string): void;
 	addLinesOfCode(type: "added" | "removed", lines: number, model: string | undefined): void;
 	addPullRequests(count: number): void;
 	addCommits(count: number): void;
@@ -34,8 +33,7 @@ export function createTelemetrySink(init: TelemetryInit): TelemetrySink {
 	}
 
 	return {
-		addSession: (startType, model) => run((target) => target.addSession(startType, model)),
-		primeSeries: (model, tokenTypes) => run((target) => target.primeSeries(model, tokenTypes)),
+		addSession: (startType) => run((target) => target.addSession(startType)),
 		addLinesOfCode: (type, lines, model) => run((target) => target.addLinesOfCode(type, lines, model)),
 		addPullRequests: (count) => run((target) => target.addPullRequests(count)),
 		addCommits: (count) => run((target) => target.addCommits(count)),

@@ -1,18 +1,14 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { promisify } from "node:util";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
+import { EDITOR_INPUT_EVENT } from "../extensions/internal/editor-activity.ts";
 import { buildOtelConfig } from "../extensions/internal/otel/config.ts";
 import { createOtelExporter } from "../extensions/otel-exporter.ts";
 
-const run = promisify(execFile);
-
-/** Metrics-only export with priming off, so every datapoint in a test comes from a real action. */
 function metricsOnlyConfig(port: number) {
 	return buildOtelConfig(
 		{
@@ -22,12 +18,8 @@ function metricsOnlyConfig(port: number) {
 			OTEL_EXPORTER_OTLP_PROTOCOL: "http/json",
 			OTEL_EXPORTER_OTLP_ENDPOINT: `http://127.0.0.1:${port}`,
 		},
-		[{ otelExporter: { primeMetricSeries: false } }],
+		[],
 	);
-}
-
-async function git(cwd: string, args: string[]): Promise<void> {
-	await run("git", ["-c", "user.email=test@example.com", "-c", "user.name=Test", ...args], { cwd });
 }
 
 type Handler = (event: unknown, ctx: unknown) => Promise<unknown> | unknown;
@@ -140,6 +132,18 @@ function metricNames(captures: Capture[]): string[] {
 	return names;
 }
 
+function metricScopes(captures: Capture[]): string[] {
+	const scopes = new Set<string>();
+	for (const capture of captures) {
+		if (!capture.path.includes("metrics")) continue;
+		const body = capture.body as { resourceMetrics: { scopeMetrics: { scope?: { name?: string } }[] }[] };
+		for (const resource of body.resourceMetrics) {
+			for (const scope of resource.scopeMetrics) if (scope.scope?.name) scopes.add(scope.scope.name);
+		}
+	}
+	return [...scopes];
+}
+
 type MetricPoint = { value: number; attributes: Record<string, unknown> };
 
 function metricPoints(captures: Capture[], name: string): MetricPoint[] {
@@ -180,22 +184,34 @@ function metricPoints(captures: Capture[], name: string): MetricPoint[] {
 	return points;
 }
 
+type LogRecord = {
+	body?: { stringValue?: string };
+	severityNumber?: number;
+	timeUnixNano?: string;
+	observedTimeUnixNano?: string;
+	attributes: { key: string; value: Record<string, unknown> }[];
+};
+
 function logRecords(captures: Capture[]) {
-	const records: { eventName?: string; attributes: { key: string; value: Record<string, unknown> }[] }[] = [];
+	const records: LogRecord[] = [];
+	const scopes: string[] = [];
 	for (const capture of captures) {
 		if (!capture.path.includes("logs")) continue;
 		const body = capture.body as {
-			resourceLogs: {
-				scopeLogs: {
-					logRecords: { eventName?: string; attributes: { key: string; value: Record<string, unknown> }[] }[];
-				}[];
-			}[];
+			resourceLogs: { scopeLogs: { scope?: { name?: string }; logRecords: LogRecord[] }[] }[];
 		};
 		for (const resource of body.resourceLogs) {
-			for (const scope of resource.scopeLogs) records.push(...scope.logRecords);
+			for (const scope of resource.scopeLogs) {
+				if (scope.scope?.name) scopes.push(scope.scope.name);
+				records.push(...scope.logRecords);
+			}
 		}
 	}
-	return records;
+	return { records, scopes };
+}
+
+function eventName(record: LogRecord | undefined): string | undefined {
+	return record?.body?.stringValue;
 }
 
 function attributeValue(
@@ -231,7 +247,7 @@ test("a full turn exports claude code metrics and events over otlp", async () =>
 	await fire("turn_start", { turnIndex: 0, timestamp: Date.now() }, ctx);
 	await fire("before_provider_request", { payload: {} }, ctx);
 	await fire("after_provider_response", { status: 200, headers: { "request-id": "req_abc" } }, ctx);
-	await fire("message_end", { message: assistantMessage() }, ctx);
+	await fire("message_end", { message: assistantMessage({ providerThinkingLevel: "high" }) }, ctx);
 
 	await fire(
 		"tool_execution_start",
@@ -255,27 +271,23 @@ test("a full turn exports claude code metrics and events over otlp", async () =>
 	await new Promise<void>((resolve) => server.close(() => resolve()));
 
 	const names = new Set(metricNames(captures));
-	// Priming publishes every series at session start, so all eight exist before anything happens.
 	assert.deepEqual([...names].sort(), [
 		"claude_code.active_time.total",
-		"claude_code.code_edit_tool.decision",
 		"claude_code.commit.count",
 		"claude_code.cost.usage",
-		"claude_code.lines_of_code.count",
-		"claude_code.pull_request.count",
 		"claude_code.session.count",
 		"claude_code.token.usage",
 	]);
+	assert.deepEqual(metricScopes(captures), ["com.anthropic.claude_code"]);
 
 	const sessions = metricPoints(captures, "claude_code.session.count");
 	assert.equal(sessions.length, 1);
 	assert.equal(sessions[0]?.value, 1);
 	assert.equal(sessions[0]?.attributes["start_type"], "fresh");
-	assert.equal(sessions[0]?.attributes["model"], "claude-sonnet-5");
-	// The command was never run, so HEAD did not move and no commit is counted.
+	assert.equal("model" in (sessions[0]?.attributes ?? {}), false);
 	assert.deepEqual(
 		metricPoints(captures, "claude_code.commit.count").map((point) => point.value),
-		[0],
+		[1],
 	);
 
 	const tokens = metricPoints(captures, "claude_code.token.usage");
@@ -289,19 +301,21 @@ test("a full turn exports claude code metrics and events over otlp", async () =>
 		].sort(),
 	);
 	for (const point of tokens) {
+		assert.equal(point.attributes["model"], "claude-sonnet-5");
 		assert.equal(point.attributes["query_source"], "main");
+		assert.equal(point.attributes["effort"], "high");
 		assert.equal(point.attributes["provider"], undefined);
-		assert.equal(point.attributes["effort"], undefined);
 	}
 
 	const costs = metricPoints(captures, "claude_code.cost.usage");
 	assert.equal(costs.length, 1);
 	assert.equal(costs[0]?.value, 0.033);
+	assert.equal(costs[0]?.attributes["effort"], "high");
 	assert.equal(costs[0]?.attributes["provider"], undefined);
 
-	const events = logRecords(captures);
-	const eventNames = events.map((record) => record.eventName);
-	assert.deepEqual(eventNames, [
+	const { records: events, scopes } = logRecords(captures);
+	assert.deepEqual(scopes, ["com.anthropic.claude_code.events"]);
+	assert.deepEqual(events.map(eventName), [
 		"claude_code.user_prompt",
 		"claude_code.api_request",
 		"claude_code.assistant_response",
@@ -312,7 +326,10 @@ test("a full turn exports claude code metrics and events over otlp", async () =>
 	assert.equal(attributeValue(prompt, "prompt"), "<REDACTED>");
 	assert.equal(attributeValue(prompt, "prompt_length"), 10);
 	assert.equal(attributeValue(prompt, "session.id"), "session-test");
-	assert.equal(attributeValue(prompt, "event.sequence"), 1);
+	assert.equal(attributeValue(prompt, "event.sequence"), 0);
+	assert.equal(attributeValue(prompt, "app.version"), undefined);
+	assert.equal(prompt?.severityNumber, undefined);
+	assert.equal(prompt?.observedTimeUnixNano, prompt?.timeUnixNano);
 
 	const apiRequest = events[1];
 	assert.equal(attributeValue(apiRequest, "model"), "claude-sonnet-5");
@@ -368,13 +385,13 @@ test("a blocked tool call reports a rejected decision instead of a result", asyn
 	await fire("session_shutdown", { reason: "quit" }, ctx);
 	await new Promise<void>((resolve) => server.close(() => resolve()));
 
-	const events = logRecords(captures);
-	const decision = events.find((record) => record.eventName === "claude_code.tool_decision");
+	const { records: events } = logRecords(captures);
+	const decision = events.find((record) => eventName(record) === "claude_code.tool_decision");
 	assert.ok(decision, "expected a tool_decision event");
 	assert.equal(attributeValue(decision, "decision"), "reject");
 	assert.equal(attributeValue(decision, "tool_name"), "edit");
 	assert.equal(
-		events.some((record) => record.eventName === "claude_code.tool_result"),
+		events.some((record) => eventName(record) === "claude_code.tool_result"),
 		false,
 	);
 });
@@ -402,7 +419,7 @@ test("api errors are reported from failed http responses", async () => {
 	await fire("session_shutdown", { reason: "quit" }, ctx);
 	await new Promise<void>((resolve) => server.close(() => resolve()));
 
-	const error = logRecords(captures).find((record) => record.eventName === "claude_code.api_error");
+	const error = logRecords(captures).records.find((record) => eventName(record) === "claude_code.api_error");
 	assert.ok(error, "expected an api_error event");
 	assert.equal(attributeValue(error, "status_code"), 429);
 	assert.equal(attributeValue(error, "request_id"), "req_429");
@@ -431,7 +448,7 @@ test("disabled signals stop their exports", async () => {
 	await fire("session_shutdown", { reason: "quit" }, ctx);
 	await new Promise<void>((resolve) => server.close(() => resolve()));
 
-	const eventNames = logRecords(captures).map((record) => record.eventName);
+	const eventNames = logRecords(captures).records.map(eventName);
 	assert.equal(eventNames.includes("claude_code.user_prompt"), false);
 	assert.ok(eventNames.includes("claude_code.api_request"));
 });
@@ -507,10 +524,21 @@ test("lines of code are measured from the real file change", async () => {
 	const points = metricPoints(captures, "claude_code.lines_of_code.count");
 	assert.equal(points.find((point) => point.attributes["type"] === "added")?.value, 2);
 	assert.equal(points.find((point) => point.attributes["type"] === "removed")?.value, 1);
+	for (const point of points) {
+		assert.equal(point.attributes["model"], "claude-sonnet-5");
+		assert.equal("query_source" in point.attributes, false);
+	}
+
+	const decisions = metricPoints(captures, "claude_code.code_edit_tool.decision");
+	assert.equal(decisions.length, 1);
+	assert.equal(decisions[0]?.attributes["tool_name"], "Write");
+	assert.equal(decisions[0]?.attributes["decision"], "accept");
+	assert.equal(decisions[0]?.attributes["source"], "config");
+	assert.equal(decisions[0]?.attributes["language"], "TypeScript");
 });
 
-test("a commit counts only when head actually moves", async () => {
-	const dir = await mkdtemp(join(tmpdir(), "otel-commit-"));
+test("a new file reports its line count as added and zero removed, like claude code", async () => {
+	const dir = await mkdtemp(join(tmpdir(), "otel-lines-"));
 	const { server, port, captures } = await startCollector();
 	const config = metricsOnlyConfig(port);
 
@@ -519,26 +547,14 @@ test("a commit counts only when head actually moves", async () => {
 	const ctx = { ...fakeCtx(), cwd: dir };
 
 	try {
-		await git(dir, ["init", "-q"]);
-		await git(dir, ["commit", "-q", "--allow-empty", "-m", "root"]);
 		await fire("session_start", { reason: "startup" }, ctx);
-
-		const args = { command: 'git commit --allow-empty -m "work"' };
-		await fire("tool_execution_start", { toolCallId: "call-1", toolName: "bash", args }, ctx);
-		await fire("tool_result", { toolCallId: "call-1", toolName: "bash", input: args }, ctx);
-		await git(dir, ["commit", "-q", "--allow-empty", "-m", "work"]);
+		const args = { path: "notes", content: "one\ntwo\nthree" };
+		await fire("tool_execution_start", { toolCallId: "call-1", toolName: "write", args }, ctx);
+		await fire("tool_result", { toolCallId: "call-1", toolName: "write", input: args }, ctx);
+		await writeFile(join(dir, "notes"), args.content, "utf8");
 		await fire(
 			"tool_execution_end",
-			{ toolCallId: "call-1", toolName: "bash", result: { content: [] }, isError: false },
-			ctx,
-		);
-
-		// The same command runs again but creates nothing, so the counter must not move.
-		await fire("tool_execution_start", { toolCallId: "call-2", toolName: "bash", args }, ctx);
-		await fire("tool_result", { toolCallId: "call-2", toolName: "bash", input: args }, ctx);
-		await fire(
-			"tool_execution_end",
-			{ toolCallId: "call-2", toolName: "bash", result: { content: [] }, isError: false },
+			{ toolCallId: "call-1", toolName: "write", result: { content: [] }, isError: false },
 			ctx,
 		);
 		await fire("session_shutdown", { reason: "quit" }, ctx);
@@ -547,13 +563,47 @@ test("a commit counts only when head actually moves", async () => {
 		await rm(dir, { recursive: true, force: true });
 	}
 
-	assert.deepEqual(
-		metricPoints(captures, "claude_code.commit.count").map((point) => point.value),
-		[1],
-	);
+	const points = metricPoints(captures, "claude_code.lines_of_code.count");
+	assert.deepEqual(points.map((point) => [point.attributes["type"], point.value]).sort(), [
+		["added", 3],
+		["removed", 0],
+	]);
+	const decision = metricPoints(captures, "claude_code.code_edit_tool.decision")[0];
+	assert.equal("language" in (decision?.attributes ?? {}), false);
 });
 
-test("pull requests count once per created url", async () => {
+test("a successful git commit command counts one commit, as in claude code", async () => {
+	const { server, port, captures } = await startCollector();
+	const config = metricsOnlyConfig(port);
+
+	const { pi, fire } = fakePi();
+	createOtelExporter(config)(pi as never);
+	const ctx = fakeCtx();
+
+	async function shell(id: string, command: string, isError: boolean) {
+		const args = { command };
+		await fire("tool_execution_start", { toolCallId: id, toolName: "bash", args }, ctx);
+		await fire("tool_result", { toolCallId: id, toolName: "bash", input: args }, ctx);
+		await fire("tool_execution_end", { toolCallId: id, toolName: "bash", result: { content: [] }, isError }, ctx);
+	}
+
+	await fire("session_start", { reason: "startup" }, ctx);
+	await shell("call-1", 'git add -A && git commit -m "work"', false);
+	await shell("call-2", "git commit --amend --no-edit", false);
+	await shell("call-3", 'git commit -m "fails the hook"', true);
+	await shell("call-4", "git log --oneline -3", false);
+	await fire("session_shutdown", { reason: "quit" }, ctx);
+	await new Promise<void>((resolve) => server.close(() => resolve()));
+
+	const points = metricPoints(captures, "claude_code.commit.count");
+	assert.equal(
+		points.reduce((sum, point) => sum + point.value, 0),
+		2,
+	);
+	assert.equal("model" in (points[0]?.attributes ?? {}), false);
+});
+
+test("pull requests count one per successful create command", async () => {
 	const { server, port, captures } = await startCollector();
 	const config = metricsOnlyConfig(port);
 
@@ -567,10 +617,9 @@ test("pull requests count once per created url", async () => {
 	await fire("tool_execution_start", { toolCallId: "call-1", toolName: "bash", args }, ctx);
 	await fire("tool_result", { toolCallId: "call-1", toolName: "bash", input: args }, ctx);
 	await fire("tool_execution_end", { toolCallId: "call-1", toolName: "bash", result, isError: false }, ctx);
-	// A retry that prints the same url is the same pull request.
 	await fire("tool_execution_start", { toolCallId: "call-2", toolName: "bash", args }, ctx);
 	await fire("tool_result", { toolCallId: "call-2", toolName: "bash", input: args }, ctx);
-	await fire("tool_execution_end", { toolCallId: "call-2", toolName: "bash", result, isError: false }, ctx);
+	await fire("tool_execution_end", { toolCallId: "call-2", toolName: "bash", result, isError: true }, ctx);
 	await fire("session_shutdown", { reason: "quit" }, ctx);
 	await new Promise<void>((resolve) => server.close(() => resolve()));
 
@@ -602,7 +651,9 @@ test("plan mode changes emit a permission mode event", async () => {
 	await fire("session_shutdown", { reason: "quit" }, ctx);
 	await new Promise<void>((resolve) => server.close(() => resolve()));
 
-	const change = logRecords(captures).find((record) => record.eventName === "claude_code.permission_mode_changed");
+	const change = logRecords(captures).records.find(
+		(record) => eventName(record) === "claude_code.permission_mode_changed",
+	);
 	assert.ok(change, "expected a permission_mode_changed event");
 	assert.equal(attributeValue(change, "from_mode"), "default");
 	assert.equal(attributeValue(change, "to_mode"), "plan");
@@ -661,7 +712,7 @@ test("borrowed configuration still exports an anthropic session", async () => {
 	await new Promise<void>((resolve) => server.close(() => resolve()));
 
 	assert.ok(metricNames(captures).includes("claude_code.token.usage"));
-	assert.ok(logRecords(captures).some((record) => record.eventName === "claude_code.api_request"));
+	assert.ok(logRecords(captures).records.some((record) => eventName(record) === "claude_code.api_request"));
 });
 
 test("claude through openrouter is skipped, even though the model is claude", async () => {
@@ -727,7 +778,7 @@ test("only the anthropic responses of a mixed session are exported", async () =>
 	await new Promise<void>((resolve) => server.close(() => resolve()));
 
 	const requestIds = logRecords(captures)
-		.filter((record) => record.eventName === "claude_code.api_request")
+		.records.filter((record) => eventName(record) === "claude_code.api_request")
 		.map((record) => attributeValue(record, "request_id"));
 	assert.deepEqual(requestIds, ["req_claude"]);
 });
@@ -754,5 +805,35 @@ test("the gate is open for every provider unless restriction is on", async () =>
 	await fire("session_shutdown", { reason: "quit" }, ctx);
 	await new Promise<void>((resolve) => server.close(() => resolve()));
 
-	assert.ok(logRecords(captures).some((record) => record.eventName === "claude_code.api_request"));
+	assert.ok(logRecords(captures).records.some((record) => eventName(record) === "claude_code.api_request"));
+});
+
+test("active time credits keystroke gaps under five seconds and the agent run span", async () => {
+	const { server, port, captures } = await startCollector();
+	const config = metricsOnlyConfig(port);
+
+	const { pi, fire } = fakePi();
+	createOtelExporter(config)(pi as never);
+	const ctx = fakeCtx();
+	const base = Date.now();
+
+	await fire("session_start", { reason: "startup" }, ctx);
+	pi.events.emit(EDITOR_INPUT_EVENT, { at: base });
+	pi.events.emit(EDITOR_INPUT_EVENT, { at: base + 1_000 });
+	pi.events.emit(EDITOR_INPUT_EVENT, { at: base + 2_500 });
+	pi.events.emit(EDITOR_INPUT_EVENT, { at: base + 60_000 });
+	pi.events.emit(EDITOR_INPUT_EVENT, { at: base + 60_500 });
+	await fire("agent_start", {}, ctx);
+	pi.events.emit(EDITOR_INPUT_EVENT, { at: base + 61_000 });
+	await new Promise((resolve) => setTimeout(resolve, 30));
+	await fire("agent_settled", {}, ctx);
+	await fire("session_shutdown", { reason: "quit" }, ctx);
+	await new Promise<void>((resolve) => server.close(() => resolve()));
+
+	const points = metricPoints(captures, "claude_code.active_time.total");
+	const user = points.filter((point) => point.attributes["type"] === "user");
+	const cli = points.filter((point) => point.attributes["type"] === "cli");
+	assert.equal(Math.round(user.reduce((sum, point) => sum + point.value, 0) * 1000), 3_000);
+	assert.equal(cli.length, 1);
+	assert.ok((cli[0]?.value ?? 0) >= 0.03);
 });

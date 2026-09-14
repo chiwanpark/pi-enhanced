@@ -148,3 +148,21 @@ export function resolveOrganizationId(
 	}
 	return undefined;
 }
+
+const BASE58_ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+
+/**
+ * Claude Code's `user.account_id`: the account UUID as a typed identifier such as `user_01...`, the
+ * UUID's 128 bits in base58 padded to 22 characters. Undefined when the value is not a UUID.
+ */
+export function taggedAccountId(accountUuid: string | undefined, prefix = "user"): string | undefined {
+	const hex = accountUuid?.replaceAll("-", "");
+	if (!hex || hex.length !== 32 || !/^[0-9a-fA-F]+$/.test(hex)) return undefined;
+	let value = BigInt(`0x${hex}`);
+	const digits = Array<string>(22).fill(BASE58_ALPHABET[0] ?? "1");
+	for (let index = 21; value > 0n && index >= 0; index -= 1) {
+		digits[index] = BASE58_ALPHABET[Number(value % 58n)] ?? "1";
+		value /= 58n;
+	}
+	return `${prefix}_01${digits.join("")}`;
+}

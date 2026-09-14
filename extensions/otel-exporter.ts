@@ -3,6 +3,7 @@ import { resolve as resolvePath } from "node:path";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { generateUnifiedPatch, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getPackageVersion } from "./internal/common.ts";
+import { EDITOR_INPUT_EVENT, isEditorInputActivity } from "./internal/editor-activity.ts";
 import { ActiveTimeTracker } from "./internal/otel/active-time.ts";
 import { buildStandardAttributes } from "./internal/otel/attributes.ts";
 import {
@@ -16,13 +17,12 @@ import {
 	byteLength,
 	codeEditToolName,
 	commandCreatesCommit,
-	commandCreatesPullRequest,
 	costUsdMicros,
 	diffLineCounts,
 	filePathFromToolInput,
 	isAnthropicProvider,
 	languageFromPath,
-	pullRequestUrls,
+	pullRequestsCreated,
 	serializeToolInput,
 	sessionStartType,
 	tokenUsageEntries,
@@ -30,7 +30,7 @@ import {
 	toolParameters,
 	truncateContent,
 } from "./internal/otel/mappers.ts";
-import { gitCommitsBetween, gitHead, gitUserEmail, readTextForDiff } from "./internal/otel/observe.ts";
+import { gitUserEmail, readTextForDiff } from "./internal/otel/observe.ts";
 import { createTelemetrySink, type TelemetrySink } from "./internal/otel/sink.ts";
 import { isPlanModeState, PLAN_MODE_STATE_EVENT } from "./internal/plan-mode-state.ts";
 
@@ -38,7 +38,6 @@ const REDACTED = "<REDACTED>";
 const HARMFUL_MODE_ENTRY_TYPE = "harmful-mode";
 const PLAN_MODE_ENTRY_TYPE = "plan-mode";
 const MAX_PENDING_REQUESTS = 32;
-const TOKEN_TYPES = ["input", "output", "cacheRead", "cacheCreation"] as const;
 
 type PermissionMode = "default" | "plan" | "bypassPermissions";
 
@@ -50,9 +49,6 @@ type ToolRun = {
 	/** File content before a code edit, for the lines-of-code diff. */
 	contentBefore: string | undefined;
 	filePath: string | undefined;
-	/** Commit at `HEAD` before a command that tries to commit. */
-	headBefore: string | undefined;
-	cwd: string | undefined;
 };
 
 type ProviderRequest = {
@@ -174,9 +170,6 @@ export function createOtelExporter(config: OtelExporterConfig) {
 		const activeTime = new ActiveTimeTracker();
 		const toolRuns = new Map<string, ToolRun>();
 		const pendingRequests: ProviderRequest[] = [];
-		// Commits and pull requests already counted, so a re-run of the same command cannot double count.
-		const countedCommits = new Set<string>();
-		const countedPullRequests = new Set<string>();
 
 		let telemetry: TelemetrySink | undefined;
 		let sessionCtx: ExtensionContext | undefined;
@@ -184,7 +177,6 @@ export function createOtelExporter(config: OtelExporterConfig) {
 		let identity = loadIdentity(undefined, identityOptions);
 		let organizationId = resolveOrganizationId(config.organizationId, process.env, identity.organizationId);
 		let activeProvider: string | undefined;
-		let activeModel: string | undefined;
 		let promptId: string | undefined;
 		let lastRequest: ProviderRequest | undefined;
 		let turnStartMs = Date.now();
@@ -206,10 +198,7 @@ export function createOtelExporter(config: OtelExporterConfig) {
 			return async (...args: T) => {
 				const ctx = args[1] as ExtensionContext | undefined;
 				if (ctx?.sessionManager) sessionCtx = ctx;
-				if (ctx?.model) {
-					activeProvider = ctx.model.provider;
-					activeModel = ctx.model.id;
-				}
+				if (ctx?.model) activeProvider = ctx.model.provider;
 				try {
 					await handler(...args);
 				} catch (error) {
@@ -300,10 +289,7 @@ export function createOtelExporter(config: OtelExporterConfig) {
 				organizationId = resolveOrganizationId(config.organizationId, process.env, identity.organizationId);
 
 				const startType = sessionStartType(event.reason, ctx.sessionManager.getEntries().length > 0);
-				if (startType && config.metrics.sessionCount) {
-					tel()?.addSession(startType, activeModel);
-				}
-				if (config.primeMetricSeries) tel()?.primeSeries(activeModel, TOKEN_TYPES);
+				if (startType && config.metrics.sessionCount) tel()?.addSession(startType);
 			}),
 		);
 
@@ -311,7 +297,6 @@ export function createOtelExporter(config: OtelExporterConfig) {
 			"model_select",
 			guard(async (event) => {
 				activeProvider = event.model.provider;
-				activeModel = event.model.id;
 			}),
 		);
 
@@ -325,6 +310,15 @@ export function createOtelExporter(config: OtelExporterConfig) {
 			if (!isPlanModeState(value)) return;
 			if (permissionMode === "bypassPermissions") return;
 			setPermissionMode(value.active ? "plan" : "default", "shift_tab");
+		});
+
+		pi.events.on(EDITOR_INPUT_EVENT, (value) => {
+			if (!isEditorInputActivity(value)) return;
+			try {
+				recordUserActivity(value.at);
+			} catch (error) {
+				reportError(sessionCtx, error instanceof Error ? error.message : String(error));
+			}
 		});
 
 		pi.on(
@@ -430,7 +424,7 @@ export function createOtelExporter(config: OtelExporterConfig) {
 				const model = message.responseModel ?? message.model;
 				const requestId = message.responseId ?? request?.requestId;
 				const thinkingLevel = pi.getThinkingLevel();
-				const metricAttribution = { model, query_source: "main" };
+				const metricAttribution = { model, query_source: "main", effort: message.providerThinkingLevel };
 				const attribution = {
 					...metricAttribution,
 					provider: message.provider,
@@ -512,8 +506,6 @@ export function createOtelExporter(config: OtelExporterConfig) {
 					executed: false,
 					contentBefore: undefined,
 					filePath: undefined,
-					headBefore: undefined,
-					cwd: ctx.cwd,
 				};
 				toolRuns.set(event.toolCallId, run);
 				if (!tel()) return;
@@ -525,12 +517,6 @@ export function createOtelExporter(config: OtelExporterConfig) {
 						run.filePath = resolvePath(ctx.cwd, relativePath);
 						run.contentBefore = await readTextForDiff(run.filePath);
 					}
-				}
-
-				// Snapshot HEAD so only commands that actually advance it are counted as commits.
-				if (config.metrics.commit && isShellTool(event.toolName)) {
-					const command = commandOf(event.args);
-					if (commandCreatesCommit(command)) run.headBefore = await gitHead(ctx.cwd);
 				}
 			}),
 		);
@@ -573,9 +559,9 @@ export function createOtelExporter(config: OtelExporterConfig) {
 					}
 					if (editTool && config.metrics.codeEditToolDecision) {
 						tel()?.addCodeEditDecision({
-							tool_name: editTool,
 							decision: "reject",
 							source: "hook",
+							tool_name: editTool,
 							language: languageFromPath(filePath),
 						});
 					}
@@ -608,9 +594,9 @@ export function createOtelExporter(config: OtelExporterConfig) {
 
 				if (editTool && config.metrics.codeEditToolDecision) {
 					tel()?.addCodeEditDecision({
-						tool_name: editTool,
 						decision: "accept",
 						source: "config",
+						tool_name: editTool,
 						language: languageFromPath(filePath),
 					});
 				}
@@ -624,21 +610,10 @@ export function createOtelExporter(config: OtelExporterConfig) {
 					}
 				}
 
-				if (isShellTool(event.toolName)) {
+				if (isShellTool(event.toolName) && !event.isError) {
 					const command = commandOf(input);
-					// A commit counts only when HEAD actually moved, so failed or empty commits are ignored.
-					if (config.metrics.commit && run?.headBefore !== undefined && run.cwd) {
-						const created = await gitCommitsBetween(run.cwd, run.headBefore, await gitHead(run.cwd));
-						const fresh = created.filter((commit) => !countedCommits.has(commit));
-						for (const commit of fresh) countedCommits.add(commit);
-						if (fresh.length > 0) tel()?.addCommits(fresh.length);
-					}
-					// A pull request counts only when the command printed a new PR or MR url.
-					if (config.metrics.pullRequest && !event.isError && commandCreatesPullRequest(command)) {
-						const fresh = pullRequestUrls(resultText).filter((url) => !countedPullRequests.has(url));
-						for (const url of fresh) countedPullRequests.add(url);
-						if (fresh.length > 0) tel()?.addPullRequests(fresh.length);
-					}
+					if (config.metrics.commit && commandCreatesCommit(command)) tel()?.addCommits(1);
+					if (config.metrics.pullRequest) tel()?.addPullRequests(pullRequestsCreated(command));
 				}
 			}),
 		);
