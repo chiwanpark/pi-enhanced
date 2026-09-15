@@ -29,6 +29,7 @@ test("allows common read-only inspection commands", () => {
 test("allows harmless output descriptor redirection", () => {
 	assertAllowed("rg pattern src 2>/dev/null");
 	assertAllowed("printf '%s\\n' result >&2");
+	assertAllowed("(cd extensions && rg pattern . >/dev/null)");
 });
 
 test("blocks file writes and mutating commands", () => {

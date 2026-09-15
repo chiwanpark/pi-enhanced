@@ -33,6 +33,8 @@ type ParsedCommand = {
 	args: ShellToken[];
 };
 
+type VariableScope = ReadonlyMap<string, string | null>;
+
 type CopyMoveArguments = {
 	operands: ShellToken[];
 	targetDirectory?: ShellToken;
@@ -251,7 +253,22 @@ function splitCommandChain(command: string): CommandSegment[] {
 	return segments;
 }
 
-function expandVariable(source: string, index: number, cwd: string): { value: string; end: number; dynamic: boolean } {
+function lookupVariable(name: string, cwd: string, scope?: VariableScope): { value: string; dynamic: boolean } {
+	if (scope?.has(name)) {
+		const assigned = scope.get(name);
+		return assigned == null ? { value: "", dynamic: true } : { value: assigned, dynamic: false };
+	}
+	if (name === "PWD") return { value: cwd, dynamic: false };
+	const value = process.env[name];
+	return value == null ? { value: "", dynamic: true } : { value, dynamic: false };
+}
+
+function expandVariable(
+	source: string,
+	index: number,
+	cwd: string,
+	scope?: VariableScope,
+): { value: string; end: number; dynamic: boolean } {
 	const next = source[index + 1] ?? "";
 	if (next === "(") return { value: "", end: index + 1, dynamic: true };
 	if (next === "'" || next === '"') return { value: "", end: index, dynamic: true };
@@ -260,20 +277,40 @@ function expandVariable(source: string, index: number, cwd: string): { value: st
 		if (end < 0) return { value: "", end: index, dynamic: true };
 		const name = source.slice(index + 2, end);
 		if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) return { value: "", end, dynamic: true };
-		if (name === "PWD") return { value: cwd, end, dynamic: false };
-		const value = process.env[name];
-		return value == null ? { value: "", end, dynamic: true } : { value, end, dynamic: false };
+		return { ...lookupVariable(name, cwd, scope), end };
 	}
 	const match = /^[A-Za-z_][A-Za-z0-9_]*/.exec(source.slice(index + 1));
 	if (!match) return { value: "$", end: index, dynamic: /[0-9@*#?$!-]/.test(next) };
 	const name = match[0];
-	const end = index + name.length;
-	if (name === "PWD") return { value: cwd, end, dynamic: false };
-	const value = process.env[name];
-	return value == null ? { value: "", end, dynamic: true } : { value, end, dynamic: false };
+	return { ...lookupVariable(name, cwd, scope), end: index + name.length };
 }
 
-function shellTokens(command: string, cwd: string): ShellToken[] {
+function closingParenIndex(source: string, openIndex: number): number {
+	let depth = 0;
+	let singleQuoted = false;
+	let doubleQuoted = false;
+	for (let index = openIndex; index < source.length; index++) {
+		const char = source[index] ?? "";
+		if (char === "\\" && !singleQuoted) {
+			index++;
+			continue;
+		}
+		if (char === "'" && !doubleQuoted) {
+			singleQuoted = !singleQuoted;
+			continue;
+		}
+		if (char === '"' && !singleQuoted) {
+			doubleQuoted = !doubleQuoted;
+			continue;
+		}
+		if (singleQuoted || doubleQuoted) continue;
+		if (char === "(") depth++;
+		if (char === ")" && --depth === 0) return index;
+	}
+	return source.length;
+}
+
+function shellTokens(command: string, cwd: string, scope?: VariableScope): ShellToken[] {
 	const tokens: ShellToken[] = [];
 	let value = "";
 	let tokenStarted = false;
@@ -322,7 +359,7 @@ function shellTokens(command: string, cwd: string): ShellToken[] {
 			continue;
 		}
 		if (!singleQuoted && char === "$") {
-			const expanded = expandVariable(command, index, cwd);
+			const expanded = expandVariable(command, index, cwd, scope);
 			value += expanded.value;
 			dynamic ||= expanded.dynamic;
 			tokenStarted = true;
@@ -330,8 +367,16 @@ function shellTokens(command: string, cwd: string): ShellToken[] {
 			continue;
 		}
 		if (!singleQuoted && (char === "<" || char === ">") && next === "(") {
+			const end = closingParenIndex(command, index + 1);
+			value += command.slice(index, end + 1);
 			dynamic = true;
 			tokenStarted = true;
+			index = end;
+			continue;
+		}
+		if (!singleQuoted && !doubleQuoted && (char === "(" || char === ")")) {
+			push();
+			continue;
 		}
 		if (!singleQuoted && !doubleQuoted && /[*?[]/.test(char)) hasGlob = true;
 		if (!singleQuoted && !doubleQuoted && /\s/.test(char)) {
@@ -343,6 +388,62 @@ function shellTokens(command: string, cwd: string): ShellToken[] {
 	}
 	push();
 	return tokens;
+}
+
+function unquotedParens(command: string): { balance: number; count: number } {
+	let balance = 0;
+	let count = 0;
+	let singleQuoted = false;
+	let doubleQuoted = false;
+	for (let index = 0; index < command.length; index++) {
+		const char = command[index] ?? "";
+		if (char === "\\" && !singleQuoted) {
+			index++;
+			continue;
+		}
+		if (char === "'" && !doubleQuoted) {
+			singleQuoted = !singleQuoted;
+			continue;
+		}
+		if (char === '"' && !singleQuoted) {
+			doubleQuoted = !doubleQuoted;
+			continue;
+		}
+		if (singleQuoted || doubleQuoted) continue;
+		if (char === "(") balance++;
+		if (char === ")") balance--;
+		if (char === "(" || char === ")") count++;
+	}
+	return { balance, count };
+}
+
+function statementAssignments(tokens: ShellToken[]): Map<string, string | null> | null {
+	const assignments = new Map<string, string | null>();
+	let index = tokens[0]?.value === "export" ? 1 : 0;
+	for (; index < tokens.length; index++) {
+		const token = tokens[index];
+		if (!token) continue;
+		const match = /^([A-Za-z_][A-Za-z0-9_]*)(\+?)=([\s\S]*)$/.exec(token.value);
+		const name = match?.[1];
+		if (!name) return null;
+		const resolvable = match?.[2] === "" && !token.dynamic && !token.hasGlob;
+		assignments.set(name, resolvable ? (match?.[3] ?? "") : null);
+	}
+	return assignments.size > 0 ? assignments : null;
+}
+
+function mergeAssignments(
+	head: Map<string, string | null> | null,
+	other: Map<string, string | null> | null,
+): Map<string, string | null> | null {
+	if (!head || !other) return null;
+	const merged = new Map<string, string | null>();
+	for (const name of new Set([...head.keys(), ...other.keys()])) {
+		const value = head.get(name) ?? null;
+		const shared = head.has(name) && other.has(name) && other.get(name) === value;
+		merged.set(name, shared ? value : null);
+	}
+	return merged;
 }
 
 function optionConsumesNext(option: string, optionsWithValues: ReadonlySet<string>): boolean {
@@ -1064,7 +1165,7 @@ export class HarmfulCommandAnalyzer {
 		return allowed();
 	}
 
-	private checkRedirects(command: string, cwd: string): CommandSafetyResult {
+	private checkRedirects(command: string, cwd: string, scope?: VariableScope): CommandSafetyResult {
 		let singleQuoted = false;
 		let doubleQuoted = false;
 		for (let index = 0; index < command.length; index++) {
@@ -1092,7 +1193,7 @@ export class HarmfulCommandAnalyzer {
 				while (/\s/.test(command[cursor] ?? "")) cursor++;
 				if (/^[0-9-]$/.test(command[cursor] ?? "")) continue;
 			}
-			const target = shellTokens(command.slice(cursor), cwd)[0];
+			const target = shellTokens(command.slice(cursor), cwd, scope)[0];
 			if (!target) continue;
 			const result = this.checkTarget("redirect", target, cwd, "write");
 			if (result.blocked) return result;
@@ -1198,16 +1299,21 @@ export class HarmfulCommandAnalyzer {
 
 	analyze(command: string): CommandSafetyResult {
 		let possibleDirectories = new Set([this.workingDirectory]);
+		const variables = new Map<string, string | null>();
+		let parenDepth = 0;
 		const segments = splitCommandChain(command);
 		for (const segment of segments) {
 			const pipelinePart = segment.separatorBefore === "|" || segment.separatorAfter === "|";
-			const parsedByDirectory = [...possibleDirectories].map((cwd) => ({
-				cwd,
-				command: unwrapCommand(shellTokens(segment.command, cwd)),
-			}));
+			const parens = unquotedParens(segment.command);
+			const plainStatement = parenDepth === 0 && parens.count === 0;
+			parenDepth += parens.balance;
+			const parsedByDirectory = [...possibleDirectories].map((cwd) => {
+				const tokens = shellTokens(segment.command, cwd, variables);
+				return { cwd, tokens, command: unwrapCommand(tokens) };
+			});
 
 			for (const parsed of parsedByDirectory) {
-				const redirectResult = this.checkRedirects(segment.command, parsed.cwd);
+				const redirectResult = this.checkRedirects(segment.command, parsed.cwd, variables);
 				if (redirectResult.blocked) return redirectResult;
 				if (!parsed.command) continue;
 
@@ -1217,7 +1323,7 @@ export class HarmfulCommandAnalyzer {
 				if (guardedResult.blocked) return guardedResult;
 
 				const allArguments = segments.flatMap((candidate) => {
-					const parsedCandidate = unwrapCommand(shellTokens(candidate.command, parsed.cwd));
+					const parsedCandidate = unwrapCommand(shellTokens(candidate.command, parsed.cwd, variables));
 					return parsedCandidate?.args ?? [];
 				});
 				const compoundResult = this.checkCompoundCommand(parsed.command, allArguments, parsed.cwd);
@@ -1225,6 +1331,12 @@ export class HarmfulCommandAnalyzer {
 			}
 
 			if (pipelinePart) continue;
+			if (plainStatement && segment.separatorAfter !== "&") {
+				const assignments = parsedByDirectory
+					.map((parsed) => statementAssignments(parsed.tokens))
+					.reduce((head, other) => mergeAssignments(head, other));
+				if (assignments) for (const [name, value] of assignments) variables.set(name, value);
+			}
 			const changedDirectories = new Set<string>();
 			for (const parsed of parsedByDirectory) {
 				if (!parsed.command || parsed.command.name !== "cd") continue;

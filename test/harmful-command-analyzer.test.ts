@@ -161,7 +161,9 @@ test("checks every command in &&, ||, semicolon, pipe, and newline chains", () =
 	assertBlocked(`echo ok; chmod 600 ${outside("c")}`);
 	assertBlocked(`printf data | tee ${outside("d")}`);
 	assertBlocked(`echo ok\ngit clean -f`);
+	assertBlocked(`(echo ok && rm ${outside("e")})`);
 	assertAllowed(`echo "rm ${outside("quoted")}" && touch ./nested/safe`);
+	assertAllowed("(cd ./nested && touch safe)");
 });
 
 test("blocks unsafe output redirects", () => {
@@ -170,6 +172,48 @@ test("blocks unsafe output redirects", () => {
 	assertAllowed("echo example > .env.example");
 	assertAllowed("echo cache > /tmp/pi-enhanced-output");
 	assertAllowed("echo ignored 2>/dev/null");
+	assertAllowed("(echo ignored > /dev/null)");
+	assertAllowed("(cd ./nested && echo ignored >/dev/null 2>&1)");
+	assertBlocked(`(echo data > ${outside("output.txt")})`, /redirect/);
+});
+
+test("allows shell functions that redirect inside command substitutions", () => {
+	assertAllowed(
+		[
+			'probe() { ip=$1; name=$2; out=$(timeout 3 curl -s --max-time 1.5 "http://$ip:8000/v1/models" 2>/dev/null); if [ -z "$out" ]; then echo "$name | $ip | NO RESPONSE"; else echo "$out" | python3 -c "',
+			"import json,sys",
+			"try:",
+			"d=json.load(sys.stdin); ids=[m.get('id') for m in d.get('data',[])]",
+			"print('$name | $ip | ' + (', '.join(i for i in ids if i) or 'EMPTY'))",
+			"except Exception: print('$name | $ip | NON-JSON')",
+			'"; fi; }',
+			"probe 198.18.128.1 ab-ckpt-cs112-deployment",
+			"probe 198.18.85.204 at-sec-sj-serve-rl-v7-hedge0-nopartial-20",
+		].join("\n"),
+	);
+});
+
+test("resolves paths through variables assigned earlier in the chain", () => {
+	assertAllowed('P=/dev; echo hello | tee "${P}/null"');
+	assertAllowed('export OUT=./nested; echo hi > "$OUT/file.txt"');
+	assertAllowed("OUT=./nested; cd $OUT && touch safe");
+	assertAllowed('A=./nested B=/dev; touch "$A/one"; echo hi > "$B/null"');
+	assertAllowed('P=/etc; P=./nested; touch "$P/two"');
+	assertAllowed('P=./nested; (touch "$P/three")');
+	assertBlocked('P=/etc; echo hi > "$P/passwd"', /outside the working directory/);
+	assertBlocked('P=/dev; echo hi > "$P/../etc/passwd"', /outside the working directory/);
+	assertBlocked(`P=${outsideDirectory}; rm -rf "$P/tree"`, /outside the working directory/);
+});
+
+test("keeps unresolved variables blocked instead of guessing a path", () => {
+	assertBlocked('echo hi > "$PI_ENHANCED_UNSET_VAR/file"', /cannot be safely resolved/);
+	assertBlocked('P=$(pwd); rm -rf "$P/nested"', /cannot be safely resolved/);
+	assertBlocked('P=./nest*; rm -rf "$P/file"', /cannot be safely resolved/);
+	assertBlocked('P=./nested; P+=/deeper; rm -rf "$P"', /cannot be safely resolved/);
+	assertBlocked('echo hi | P=./nested tee "${P}/file"', /cannot be safely resolved/);
+	assertBlocked('P=./nested | cat; rm -rf "$P/file"', /cannot be safely resolved/);
+	assertBlocked('P=./nested & rm -rf "$P/file"', /cannot be safely resolved/);
+	assertBlocked('(P=./nested); rm -rf "$P/file"', /cannot be safely resolved/);
 });
 
 test("blocks destructive find, xargs, and rsync patterns", () => {
