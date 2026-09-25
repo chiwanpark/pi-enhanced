@@ -1,13 +1,9 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { cleanSystemPrompt } from "./internal/system-prompt";
+import { getAgentDir, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { refineSystemMessages } from "./internal/system-prompt";
 
 export default function systemPromptCleanupExtension(pi: ExtensionAPI) {
-	pi.on("before_agent_start", async (event) => {
-		const systemPrompt = cleanSystemPrompt(
-			event.systemPrompt,
-			event.systemPromptOptions.cwd,
-			Boolean(event.systemPromptOptions.customPrompt),
-		);
-		return systemPrompt === event.systemPrompt ? undefined : { systemPrompt };
+	pi.on("context_with_system", async (event) => {
+		const messages = refineSystemMessages(event.messages, getAgentDir());
+		return messages ? { messages } : undefined;
 	});
 }

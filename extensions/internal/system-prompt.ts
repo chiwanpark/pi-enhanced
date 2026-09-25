@@ -1,81 +1,23 @@
-const AVAILABLE_TOOLS_HEADER = "\n\nAvailable tools:\n";
-const GUIDELINES_HEADER = "\n\nGuidelines:\n";
-const PI_DOCUMENTATION_HEADER_PREFIX = "\n\nPi documentation (";
-const PROJECT_CONTEXT_OPEN = "<project_context>";
-const PROJECT_CONTEXT_CLOSE = "</project_context>";
-const PROJECT_CONTEXT_INTRO = "Project-specific instructions and guidelines:";
-const PROJECT_INSTRUCTIONS_OPEN = "<project_instructions ";
-const PROJECT_INSTRUCTIONS_CLOSE = "</project_instructions>";
-const PROJECT_INSTRUCTION_OPEN = "<project_instruction ";
-const PROJECT_INSTRUCTION_CLOSE = "</project_instruction>";
-const CDATA_OPEN = "<![CDATA[";
-const CDATA_CLOSE = "]]>";
-const CONCISE_IDENTITY =
-	"You are a coding assistant operating inside pi. Use the available tools to inspect and modify code.";
-const CUSTOM_TOOLS_NOTE =
-	"In addition to the tools above, you may have access to other custom tools depending on the project.";
+import path from "node:path";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 
-export const HOUSE_GUIDELINES = [
-	"Start with narrow, targeted inspection and reuse prior findings. Avoid broad scans and generated directories unless needed.",
-	"Read bounded slices with `read` offset/limit instead of whole-file dumps, and scope bash `rg`/`find` with a path or glob.",
-	"After editing a file, re-read the changed region to confirm the edit landed as intended.",
-	"Write terminal-friendly responses: avoid Markdown headings; use **Title Case** section labels, short paragraphs, and flat bullets.",
-];
+type Sections = Record<string, string | null>;
 
-export function removeDefaultAvailableToolsBlock(systemPrompt: string): string {
-	const start = systemPrompt.indexOf(AVAILABLE_TOOLS_HEADER);
-	if (start < 0) return systemPrompt;
-
-	const end = systemPrompt.indexOf(GUIDELINES_HEADER, start + AVAILABLE_TOOLS_HEADER.length);
-	if (end < 0) return systemPrompt;
-
-	const block = systemPrompt.slice(start + AVAILABLE_TOOLS_HEADER.length, end);
-	if (!block.includes(CUSTOM_TOOLS_NOTE)) return systemPrompt;
-
-	return systemPrompt.slice(0, start) + systemPrompt.slice(end);
+export interface ContextFile {
+	path: string;
+	content: string;
 }
 
-export function replaceDefaultIdentity(systemPrompt: string): string {
-	const defaultIntroductionEnd = systemPrompt.indexOf(AVAILABLE_TOOLS_HEADER);
-	if (defaultIntroductionEnd < 0) return systemPrompt;
-	return CONCISE_IDENTITY + systemPrompt.slice(defaultIntroductionEnd);
-}
+const RULES_SECTION = "rules";
+const PROJECT_SECTION = "project_context";
+const USER_SECTION = "user_instructions";
+const REMOVED_SECTIONS: readonly string[] = ["tools", "docs"];
 
-export function removeDefaultPiDocumentationBlock(systemPrompt: string): string {
-	const start = systemPrompt.indexOf(PI_DOCUMENTATION_HEADER_PREFIX);
-	if (start < 0) return systemPrompt;
-
-	const headerEnd = systemPrompt.indexOf("\n", start + PI_DOCUMENTATION_HEADER_PREFIX.length);
-	if (headerEnd < 0) return systemPrompt;
-
-	let lineStart = headerEnd + 1;
-	if (!systemPrompt.startsWith("- ", lineStart)) return systemPrompt;
-
-	let end = headerEnd;
-	while (systemPrompt.startsWith("- ", lineStart)) {
-		const lineEnd = systemPrompt.indexOf("\n", lineStart);
-		if (lineEnd < 0) {
-			end = systemPrompt.length;
-			break;
-		}
-		end = lineEnd;
-		lineStart = lineEnd + 1;
-	}
-
-	return systemPrompt.slice(0, start) + systemPrompt.slice(end);
-}
-
-export function insertGuidelines(systemPrompt: string, guidelines: readonly string[]): string {
-	const start = systemPrompt.indexOf(GUIDELINES_HEADER);
-	if (start < 0) return systemPrompt;
-
-	const insertAt = start + GUIDELINES_HEADER.length;
-	const bullets = guidelines
-		.filter((guideline) => !systemPrompt.includes(`- ${guideline}`))
-		.map((guideline) => `- ${guideline}\n`)
-		.join("");
-	return bullets ? systemPrompt.slice(0, insertAt) + bullets + systemPrompt.slice(insertAt) : systemPrompt;
-}
+const PI_PROJECT_OPEN = "<project_context>\nProject-specific instructions and guidelines:\n\n";
+const PI_PROJECT_CLOSE = "\n</project_context>";
+const PI_FILE_OPEN = '<project_instructions path="';
+const PI_FILE_OPEN_END = '">\n';
+const PI_FILE_CLOSE = "\n</project_instructions>";
 
 const GUIDELINE_REWRITES: readonly { readonly match: RegExp; readonly replace: string }[] = [
 	{
@@ -101,128 +43,214 @@ const GUIDELINE_REWRITES: readonly { readonly match: RegExp; readonly replace: s
 	},
 ];
 
-function rewriteGuideline(guideline: string): string {
+export function rewriteGuideline(guideline: string): string {
 	for (const rule of GUIDELINE_REWRITES) {
 		if (rule.match.test(guideline)) return guideline.replace(rule.match, rule.replace);
 	}
 	return guideline;
 }
 
-export function polishGuidelines(systemPrompt: string): string {
-	const header = systemPrompt.indexOf(GUIDELINES_HEADER);
-	if (header < 0) return systemPrompt;
-
-	const start = header + GUIDELINES_HEADER.length;
-	const bullets: string[] = [];
-	let cursor = start;
-	while (systemPrompt.startsWith("- ", cursor)) {
-		const lineEnd = systemPrompt.indexOf("\n", cursor);
-		const end = lineEnd < 0 ? systemPrompt.length : lineEnd;
-		bullets.push(systemPrompt.slice(cursor + 2, end));
-		cursor = lineEnd < 0 ? end : end + 1;
-		if (lineEnd < 0) break;
-	}
-	if (bullets.length === 0) return systemPrompt;
-
-	const rewritten = bullets.map(rewriteGuideline);
-	if (rewritten.every((bullet, index) => bullet === bullets[index])) return systemPrompt;
-
-	const trailingNewline = systemPrompt[cursor - 1] === "\n";
-	const body = rewritten.map((bullet) => `- ${bullet}`).join("\n") + (trailingNewline ? "\n" : "");
-	return systemPrompt.slice(0, start) + body + systemPrompt.slice(cursor);
+export function polishRules(rules: string): string {
+	return rules
+		.split("\n")
+		.map((line) => (line.startsWith("- ") ? `- ${rewriteGuideline(line.slice(2))}` : line))
+		.join("\n");
 }
 
-export function removeProjectContextIntroduction(systemPrompt: string): string {
-	const open = systemPrompt.indexOf(PROJECT_CONTEXT_OPEN);
-	if (open < 0) return systemPrompt;
+export function parsePiProjectContext(section: string): ContextFile[] | undefined {
+	if (!section.startsWith(PI_PROJECT_OPEN) || !section.endsWith(PI_PROJECT_CLOSE)) return undefined;
+	const body = section.slice(PI_PROJECT_OPEN.length, section.length - PI_PROJECT_CLOSE.length);
 
-	const start = systemPrompt.indexOf(PROJECT_CONTEXT_INTRO, open + PROJECT_CONTEXT_OPEN.length);
-	if (start < 1 || systemPrompt[start - 1] !== "\n") return systemPrompt;
-
-	const close = systemPrompt.indexOf(PROJECT_CONTEXT_CLOSE, open);
-	if (close >= 0 && start > close) return systemPrompt;
-
-	let end = start + PROJECT_CONTEXT_INTRO.length;
-	while (systemPrompt[end] === "\n") end += 1;
-
-	return systemPrompt.slice(0, start) + systemPrompt.slice(end);
-}
-
-export function renameProjectInstructionElements(systemPrompt: string): string {
-	return systemPrompt
-		.split(PROJECT_INSTRUCTIONS_OPEN)
-		.join(PROJECT_INSTRUCTION_OPEN)
-		.split(PROJECT_INSTRUCTIONS_CLOSE)
-		.join(PROJECT_INSTRUCTION_CLOSE);
-}
-
-export function wrapProjectInstructionsInCdata(systemPrompt: string): string {
-	let result = "";
+	const files: ContextFile[] = [];
 	let cursor = 0;
+	while (cursor < body.length) {
+		if (!body.startsWith(PI_FILE_OPEN, cursor)) return undefined;
+		const pathStart = cursor + PI_FILE_OPEN.length;
+		const pathEnd = body.indexOf(PI_FILE_OPEN_END, pathStart);
+		if (pathEnd < 0) return undefined;
 
-	for (;;) {
-		const open = systemPrompt.indexOf(PROJECT_INSTRUCTION_OPEN, cursor);
-		if (open < 0) break;
+		const contentStart = pathEnd + PI_FILE_OPEN_END.length;
+		let close = body.indexOf(PI_FILE_CLOSE, contentStart);
+		for (;;) {
+			if (close < 0) return undefined;
+			const next = close + PI_FILE_CLOSE.length;
+			if (next === body.length || body.startsWith(`\n\n${PI_FILE_OPEN}`, next)) break;
+			close = body.indexOf(PI_FILE_CLOSE, close + 1);
+		}
 
-		const openEnd = systemPrompt.indexOf(">", open);
-		if (openEnd < 0) break;
+		files.push({ path: body.slice(pathStart, pathEnd), content: body.slice(contentStart, close) });
+		cursor = close + PI_FILE_CLOSE.length;
+		if (cursor < body.length) cursor += 2;
+	}
+	return files.length > 0 ? files : undefined;
+}
 
-		const close = systemPrompt.indexOf(PROJECT_INSTRUCTION_CLOSE, openEnd);
-		if (close < 0) break;
+function renderInstructions(tag: string, file: ContextFile): string {
+	return `<${tag} path="${file.path}">\n${file.content.trim()}\n</${tag}>`;
+}
 
-		const content = systemPrompt.slice(openEnd + 1, close);
-		const escaped = content.trim().split(CDATA_CLOSE).join("]]]]><![CDATA[>");
-		const wrapped = content.trimStart().startsWith(CDATA_OPEN)
-			? content
-			: `\n${CDATA_OPEN}\n\n${escaped}\n\n${CDATA_CLOSE}\n`;
+function renderUserInstructions(files: readonly ContextFile[]): string {
+	if (files.length === 1) return renderInstructions(USER_SECTION, files[0]!);
+	const body = files.map((file) => renderInstructions("instructions", file)).join("\n\n");
+	return `<${USER_SECTION}>\n${body}\n</${USER_SECTION}>`;
+}
 
-		result += systemPrompt.slice(cursor, openEnd + 1) + wrapped;
-		cursor = close;
+function precedenceNote(hasUserFiles: boolean, projectFileCount: number): string | undefined {
+	const deeper = projectFileCount > 1;
+	if (hasUserFiles && deeper) {
+		return `These files override <${USER_SECTION}> on conflict; files in deeper directories take precedence.`;
+	}
+	if (hasUserFiles) return `These files override <${USER_SECTION}> on conflict.`;
+	if (deeper) return "Files in deeper directories take precedence on conflict.";
+	return undefined;
+}
+
+function renderProjectContext(files: readonly ContextFile[], hasUserFiles: boolean): string {
+	const note = precedenceNote(hasUserFiles, files.length);
+	const body = [...(note ? [note] : []), ...files.map((file) => renderInstructions("instructions", file))].join("\n\n");
+	return `<${PROJECT_SECTION}>\n${body}\n</${PROJECT_SECTION}>`;
+}
+
+export interface ContextSections {
+	user: string | undefined;
+	project: string | undefined;
+}
+
+export function renderContextSections(files: readonly ContextFile[], agentDir: string): ContextSections {
+	const resolvedAgentDir = path.resolve(agentDir);
+	const userFiles = files.filter((file) => path.dirname(path.resolve(file.path)) === resolvedAgentDir);
+	const projectFiles = files.filter((file) => !userFiles.includes(file));
+	return {
+		user: userFiles.length > 0 ? renderUserInstructions(userFiles) : undefined,
+		project: projectFiles.length > 0 ? renderProjectContext(projectFiles, userFiles.length > 0) : undefined,
+	};
+}
+
+interface ContextState {
+	user: boolean;
+	project: boolean;
+}
+
+function splitProjectContext(value: string | null, agentDir: string, state: ContextState): Sections | undefined {
+	if (value === null) {
+		const removed: Sections = {};
+		if (state.user) removed[USER_SECTION] = null;
+		if (state.project) removed[PROJECT_SECTION] = null;
+		state.user = false;
+		state.project = false;
+		return removed;
 	}
 
-	return result + systemPrompt.slice(cursor);
-}
+	const files = parsePiProjectContext(value);
+	if (!files) return undefined;
 
-function removeCurrentDirectoryLine(systemPrompt: string, cwd: string): string {
-	const line = `Current working directory: ${cwd}`;
-	const start = systemPrompt.lastIndexOf(line);
-	if (start < 0) return systemPrompt;
-	if (start > 0 && systemPrompt[start - 1] !== "\n") return systemPrompt;
-
-	const end = start + line.length;
-	if (end < systemPrompt.length && systemPrompt[end] !== "\n") return systemPrompt;
-
-	const removeStart = start > 0 ? start - 1 : start;
-	return `${systemPrompt.slice(0, removeStart)}${systemPrompt.slice(end)}`.trimEnd();
-}
-
-export function moveCurrentDirectoryToProjectContext(systemPrompt: string, cwd: string): string {
-	const normalizedCwd = cwd.replace(/\\/g, "/");
-	const element = `<current_directory>${normalizedCwd}</current_directory>`;
-	const withoutLine = removeCurrentDirectoryLine(systemPrompt, normalizedCwd);
-	if (withoutLine.includes(element)) return withoutLine;
-
-	const close = withoutLine.lastIndexOf(PROJECT_CONTEXT_CLOSE);
-	if (close < 0) return `${withoutLine.trimEnd()}\n\n<project_context>\n\n${element}\n\n${PROJECT_CONTEXT_CLOSE}`;
-
-	return `${withoutLine.slice(0, close)}${element}\n\n${withoutLine.slice(close)}`;
-}
-
-export function cleanSystemPrompt(systemPrompt: string, cwd: string, hasCustomPrompt = false): string {
-	let cleaned = systemPrompt;
-
-	// A custom prompt replaces Pi's default template and therefore has no
-	// generated default sections to remove.
-	if (!hasCustomPrompt) {
-		cleaned = replaceDefaultIdentity(cleaned);
-		cleaned = removeDefaultAvailableToolsBlock(cleaned);
-		cleaned = removeDefaultPiDocumentationBlock(cleaned);
+	const rendered = renderContextSections(files, agentDir);
+	const result: Sections = {};
+	for (const [key, name, text] of [
+		["user", USER_SECTION, rendered.user],
+		["project", PROJECT_SECTION, rendered.project],
+	] as const) {
+		if (text !== undefined) {
+			result[name] = text;
+			state[key] = true;
+		} else if (state[key]) {
+			result[name] = null;
+			state[key] = false;
+		}
 	}
+	return result;
+}
 
-	cleaned = insertGuidelines(cleaned, HOUSE_GUIDELINES);
-	cleaned = polishGuidelines(cleaned);
-	cleaned = removeProjectContextIntroduction(cleaned);
-	cleaned = renameProjectInstructionElements(cleaned);
-	cleaned = wrapProjectInstructionsInCdata(cleaned);
-	return moveCurrentDirectoryToProjectContext(cleaned, cwd);
+function refineSections(sections: Sections, agentDir: string, state: ContextState): Sections | undefined {
+	let changed = false;
+	const refined: Sections = {};
+	for (const [name, value] of Object.entries(sections)) {
+		if (REMOVED_SECTIONS.includes(name)) {
+			changed = true;
+			continue;
+		}
+		if (name === RULES_SECTION && typeof value === "string") {
+			const polished = polishRules(value);
+			if (polished !== value) changed = true;
+			refined[name] = polished;
+			continue;
+		}
+		if (name === PROJECT_SECTION) {
+			const split = splitProjectContext(value, agentDir, state);
+			if (split) {
+				changed = true;
+				Object.assign(refined, split);
+				continue;
+			}
+			state.project = value !== null;
+		}
+		if (name === USER_SECTION) state.user = value !== null;
+		refined[name] = value;
+	}
+	return changed ? refined : undefined;
+}
+
+function isEmptySystemMessage(message: AgentMessage): boolean {
+	if (message.role !== "system") return false;
+	const content =
+		typeof message.content === "string" ? message.content : message.content.map((part) => part.text).join("");
+	return (
+		content.length === 0 &&
+		Object.keys(message.sections ?? {}).length === 0 &&
+		!message.toolsAdded?.length &&
+		!message.toolsRemoved?.length
+	);
+}
+
+export function refineSystemMessages(messages: AgentMessage[], agentDir: string): AgentMessage[] | undefined {
+	const state: ContextState = { user: false, project: false };
+	let changed = false;
+	const result: AgentMessage[] = [];
+	for (const [index, message] of messages.entries()) {
+		if (message.role !== "system" || !message.sections) {
+			result.push(message);
+			continue;
+		}
+
+		const sections = refineSections(message.sections, agentDir, state);
+		if (!sections) {
+			result.push(message);
+			continue;
+		}
+
+		changed = true;
+		const refined = { ...message, sections };
+		if (index === 0 || !isEmptySystemMessage(refined)) result.push(refined);
+	}
+	return changed ? result : undefined;
+}
+
+function sectionPattern(name: string): RegExp {
+	return new RegExp(`(^|\\n\\n)(<${name}>\\n[\\s\\S]*?\\n</${name}>)(?=\\n\\n|$)`);
+}
+
+function refineRenderedProjectContext(prompt: string, agentDir: string): string {
+	const start = prompt.indexOf(`\n\n${PI_PROJECT_OPEN}`);
+	if (start < 0) return prompt;
+	const close = prompt.lastIndexOf(PI_PROJECT_CLOSE);
+	if (close < start) return prompt;
+
+	const end = close + PI_PROJECT_CLOSE.length;
+	const files = parsePiProjectContext(prompt.slice(start + 2, end));
+	if (!files) return prompt;
+
+	const { user, project } = renderContextSections(files, agentDir);
+	const replacement = [user, project].filter((text) => text !== undefined).join("\n\n");
+	return `${prompt.slice(0, start)}\n\n${replacement}${prompt.slice(end)}`;
+}
+
+export function refineRenderedPrompt(systemPrompt: string, agentDir: string): string {
+	const contextStart = systemPrompt.indexOf(`\n\n${PI_PROJECT_OPEN}`);
+	const splitAt = contextStart < 0 ? systemPrompt.length : contextStart;
+	let head = systemPrompt.slice(0, splitAt);
+	for (const name of REMOVED_SECTIONS) head = head.replace(sectionPattern(name), "");
+	head = head.replace(sectionPattern(RULES_SECTION), (_match, prefix: string, section: string) => {
+		return prefix + polishRules(section);
+	});
+	return refineRenderedProjectContext(head + systemPrompt.slice(splitAt), agentDir);
 }

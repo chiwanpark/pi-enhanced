@@ -3,7 +3,6 @@ import path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { readPiEnhancedSettings } from "./internal/common.ts";
 import { detectCommentSyntax, findComments, type CommentFinding } from "./internal/comment-analyzer.ts";
-import { insertGuidelines } from "./internal/system-prompt.ts";
 
 const STATE_ENTRY_TYPE = "comment-guard-mode";
 const MAX_REPORTED = 5;
@@ -179,8 +178,9 @@ export default function commentGuardExtension(pi: ExtensionAPI) {
 		const cwd = event.systemPromptOptions.cwd ?? ctx.cwd;
 		if (loadConfig(cwd).mode === "off" || isGuardDisabled(ctx)) return undefined;
 
-		const systemPrompt = insertGuidelines(event.systemPrompt, [GUIDELINE]);
-		return systemPrompt === event.systemPrompt ? undefined : { systemPrompt };
+		const { promptGuidelines } = event.systemPromptOptions;
+		if (!promptGuidelines.includes(GUIDELINE)) promptGuidelines.push(GUIDELINE);
+		return undefined;
 	});
 
 	pi.on("tool_call", async (event, ctx) => {

@@ -16,10 +16,12 @@ type ToolResultHandler = (event: {
 	content: { type: string; text?: string }[];
 }) => Promise<{ content: { type: string; text?: string }[] } | undefined>;
 
+type PromptOptions = { cwd: string; promptGuidelines: string[] };
+
 type BeforeAgentStartHandler = (
-	event: { systemPrompt: string; systemPromptOptions: { cwd?: string } },
+	event: { systemPromptOptions: PromptOptions },
 	ctx: ExtensionContext,
-) => Promise<{ systemPrompt?: string } | undefined>;
+) => Promise<unknown>;
 
 type BranchEntry = { type: string; customType: string; data: Record<string, unknown> };
 
@@ -268,21 +270,19 @@ test("session override from /comments disables the guard", async () => {
 });
 
 test("the active guard adds a system prompt guideline", async () => {
-	const prompt = "You are a coding assistant.\n\nGuidelines:\n- Be concise in your responses.\n";
+	const guideline = /^Do not add comments to code; `edit` and `write` reject them/;
 
 	await withHarness({}, async (harness) => {
-		const result = await harness.onBeforeAgentStart(
-			{ systemPrompt: prompt, systemPromptOptions: { cwd: harness.dir } },
-			harness.ctx,
-		);
-		assert.match(result?.systemPrompt ?? "", /- Do not add comments to code; `edit` and `write` reject them/);
+		const options: PromptOptions = { cwd: harness.dir, promptGuidelines: [] };
+		await harness.onBeforeAgentStart({ systemPromptOptions: options }, harness.ctx);
+		await harness.onBeforeAgentStart({ systemPromptOptions: options }, harness.ctx);
+		assert.equal(options.promptGuidelines.length, 1);
+		assert.match(options.promptGuidelines[0] ?? "", guideline);
 	});
 
 	await withHarness({ mode: "off" }, async (harness) => {
-		const result = await harness.onBeforeAgentStart(
-			{ systemPrompt: prompt, systemPromptOptions: { cwd: harness.dir } },
-			harness.ctx,
-		);
-		assert.equal(result, undefined);
+		const options: PromptOptions = { cwd: harness.dir, promptGuidelines: [] };
+		await harness.onBeforeAgentStart({ systemPromptOptions: options }, harness.ctx);
+		assert.deepEqual(options.promptGuidelines, []);
 	});
 });
