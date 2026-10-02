@@ -90,6 +90,12 @@ type PaddedComponentLike = {
 	setBgFn?: ((bgFn: (content: string) => string) => void) | undefined;
 };
 
+type MarkdownComponentLike = {
+	defaultTextStyle?: { bgColor?: ((content: string) => string) | undefined } | undefined;
+	invalidate?: unknown;
+	__piEnhancedBgAnsi?: string | undefined;
+};
+
 type ThemedComponentLike = {
 	render(width: number): string[];
 	__piEnhancedEditorThemePatched?: boolean | undefined;
@@ -336,11 +342,21 @@ function applyEditorBackground(component: unknown, bgAnsi: string): void {
 	}
 
 	const renderable = component as PaddedComponentLike;
-	if (typeof renderable.setBgFn !== "function") {
+	if (typeof renderable.setBgFn === "function") {
+		renderable.setBgFn((content) => applyBackground(content, bgAnsi));
 		return;
 	}
 
-	renderable.setBgFn((content) => applyBackground(content, bgAnsi));
+	const markdown = component as MarkdownComponentLike;
+	if (!markdown.defaultTextStyle || markdown.__piEnhancedBgAnsi === bgAnsi) {
+		return;
+	}
+
+	markdown.defaultTextStyle = { ...markdown.defaultTextStyle, bgColor: (content) => applyBackground(content, bgAnsi) };
+	markdown.__piEnhancedBgAnsi = bgAnsi;
+	if (typeof markdown.invalidate === "function") {
+		markdown.invalidate();
+	}
 }
 
 function patchToolExecutionPrototype(prototype: ToolExecutionComponentLike): void {
@@ -356,14 +372,23 @@ function patchToolExecutionPrototype(prototype: ToolExecutionComponentLike): voi
 	};
 }
 
+function isUserContentComponent(child: unknown): boolean {
+	if (!child || typeof child !== "object") {
+		return false;
+	}
+
+	return (
+		typeof (child as PaddedComponentLike).setBgFn === "function" ||
+		typeof (child as MarkdownComponentLike).defaultTextStyle?.bgColor === "function"
+	);
+}
+
 function findUserContentBox(component: UserMessageComponentLike): unknown {
 	if (component.contentBox) {
 		return component.contentBox;
 	}
 
-	return component.children?.find(
-		(child) => child && typeof child === "object" && typeof (child as PaddedComponentLike).setBgFn === "function",
-	);
+	return component.children?.find(isUserContentComponent);
 }
 
 function patchUserMessagePrototype(prototype: UserMessageComponentLike, getTheme: () => Theme): void {
