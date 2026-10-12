@@ -18,7 +18,7 @@ pi install git:https://github.com/chiwanpark/pi-enhanced
 - `/usage`: Shows the rolling limits (5h / weekly, or the provider equivalent) and the credit balance of every logged-in provider, together with the account each one belongs to. Model-scoped windows (e.g. Claude's per-model weekly limit) are listed as extra rows, and credit-metered plans (e.g. Codex Business/Enterprise workspaces, Claude extra usage) report a credits row instead of rolling windows.
 - `/status`: Shows the current model, directory, `AGENTS.md` files, account, session id, and the limits of the active provider.
 - `/system-prompt`: Shows the current effective system prompt.
-- `/plan`, `/harmful`, `/comments`: Toggle Plan Mode, harmful mode, and the comment guard.
+- `/harmful`, `/comments`: Toggle harmful mode and the comment guard.
 
 ## Command Safety
 
@@ -124,8 +124,6 @@ Project settings override global settings.
   - `allowDirectives`: Allow tooling directives such as shebangs, `eslint-disable`, `@ts-expect-error`, and `noqa` (default: true).
   - `allowPatterns`: Extra regular expressions, matched against the comment text, that stay allowed.
   - `ignorePaths`: Project-relative or absolute paths whose files are never checked.
-- `planMode`: Configures plan mode behavior. Bash remains available for known read-only inspection commands; file writes, mutating commands, dynamic shell execution, and unknown commands are blocked.
-  - `blockedTools`: An array of tool names to block completely when Plan Mode is active (default: `["edit", "write"]`).
 - `harmfulCommandGuard`: Adds path exceptions to the command and file-operation safety checks. Entries may be absolute, `~`-prefixed, or relative to the project root, and the global and project lists are unioned instead of overridden.
   - `allowPaths`: Roots that may be targeted even outside the working directory. An allowed root also overrides the built-in `.env`/`.git` protection and the device-path deletion rule.
   - `denyPaths`: Roots that are never targetable, even inside the working directory or an allowed root. Deny wins over allow, and also covers ancestors and globs that could expand into the denied path.
@@ -176,9 +174,6 @@ Project settings override global settings.
       "allowDirectives": true,
       "allowPatterns": ["^// SAFETY:"],
       "ignorePaths": ["docs", "examples"]
-    },
-    "planMode": {
-      "blockedTools": ["edit", "write"]
     },
     "harmfulCommandGuard": {
       "allowPaths": ["~/scratch", "../sibling-repo"],

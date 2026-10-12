@@ -6,7 +6,6 @@ import editorExtension from "./editor";
 import harmfulCommandGuardExtension from "./harmful-command-guard";
 import hashlineExtension from "./hashline";
 import otelExporterExtension from "./otel-exporter";
-import planModeExtension from "./plan-mode";
 import statusCommandExtension from "./status-command";
 import semanticDisciplineExtension from "./semantic-discipline";
 import statusbarExtension from "./statusbar";
@@ -35,7 +34,6 @@ export default composeExtensions(
 	askUserExtension,
 	webSearchExtension,
 	editorExtension,
-	planModeExtension,
 	statusbarExtension,
 	statusCommandExtension,
 	usageCommandExtension,

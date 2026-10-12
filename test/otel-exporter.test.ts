@@ -629,7 +629,7 @@ test("pull requests count one per successful create command", async () => {
 	);
 });
 
-test("plan mode changes emit a permission mode event", async () => {
+test("harmful mode changes emit a permission mode event", async () => {
 	const { server, port, captures } = await startCollector();
 	const config = buildOtelConfig(
 		{
@@ -644,10 +644,12 @@ test("plan mode changes emit a permission mode event", async () => {
 
 	const { pi, fire } = fakePi();
 	createOtelExporter(config)(pi as never);
-	const ctx = fakeCtx();
+	const entries: { type: string; customType?: string; data?: unknown }[] = [];
+	const ctx = fakeCtx(entries);
 
 	await fire("session_start", { reason: "startup" }, ctx);
-	pi.events.emit("pi-enhanced:plan-mode-state", { active: true });
+	entries.push({ type: "custom", customType: "harmful-mode", data: { active: true } });
+	await fire("before_agent_start", { prompt: "go" }, ctx);
 	await fire("session_shutdown", { reason: "quit" }, ctx);
 	await new Promise<void>((resolve) => server.close(() => resolve()));
 
@@ -656,7 +658,7 @@ test("plan mode changes emit a permission mode event", async () => {
 	);
 	assert.ok(change, "expected a permission_mode_changed event");
 	assert.equal(attributeValue(change, "from_mode"), "default");
-	assert.equal(attributeValue(change, "to_mode"), "plan");
+	assert.equal(attributeValue(change, "to_mode"), "bypassPermissions");
 });
 
 function anthropicOnlyConfig(port: number) {

@@ -32,14 +32,12 @@ import {
 } from "./internal/otel/mappers.ts";
 import { gitUserEmail, readTextForDiff } from "./internal/otel/observe.ts";
 import { createTelemetrySink, type TelemetrySink } from "./internal/otel/sink.ts";
-import { isPlanModeState, PLAN_MODE_STATE_EVENT } from "./internal/plan-mode-state.ts";
 
 const REDACTED = "<REDACTED>";
 const HARMFUL_MODE_ENTRY_TYPE = "harmful-mode";
-const PLAN_MODE_ENTRY_TYPE = "plan-mode";
 const MAX_PENDING_REQUESTS = 32;
 
-type PermissionMode = "default" | "plan" | "bypassPermissions";
+type PermissionMode = "default" | "bypassPermissions";
 
 type ToolRun = {
 	toolName: string;
@@ -245,17 +243,13 @@ export function createOtelExporter(config: OtelExporterConfig) {
 		}
 
 		function readPermissionMode(ctx: ExtensionContext): PermissionMode {
-			let plan = false;
 			let harmful = false;
 			for (const entry of ctx.sessionManager.getBranch()) {
-				if (entry.type !== "custom") continue;
+				if (entry.type !== "custom" || entry.customType !== HARMFUL_MODE_ENTRY_TYPE) continue;
 				const active = (entry.data as { active?: unknown } | undefined)?.active;
-				if (typeof active !== "boolean") continue;
-				if (entry.customType === PLAN_MODE_ENTRY_TYPE) plan = active;
-				else if (entry.customType === HARMFUL_MODE_ENTRY_TYPE) harmful = active;
+				if (typeof active === "boolean") harmful = active;
 			}
-			if (harmful) return "bypassPermissions";
-			return plan ? "plan" : "default";
+			return harmful ? "bypassPermissions" : "default";
 		}
 
 		function setPermissionMode(next: PermissionMode, trigger: string): void {
@@ -305,12 +299,6 @@ export function createOtelExporter(config: OtelExporterConfig) {
 			identity: identity.email ?? identity.userId,
 			lastError: lastErrorMessage,
 		}));
-
-		pi.events.on(PLAN_MODE_STATE_EVENT, (value) => {
-			if (!isPlanModeState(value)) return;
-			if (permissionMode === "bypassPermissions") return;
-			setPermissionMode(value.active ? "plan" : "default", "shift_tab");
-		});
 
 		pi.events.on(EDITOR_INPUT_EVENT, (value) => {
 			if (!isEditorInputActivity(value)) return;
