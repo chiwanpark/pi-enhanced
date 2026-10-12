@@ -1,7 +1,7 @@
 {
   "name": "@chiwanpark/pi-enhanced",
   "version": "0.1.0",
-  "description": "My own Pi skills, extensions, and themes",
+  "description": "My own Pi skills and extensions",
   "main": "index.js",
   "type": "module",
   "scripts": {
@@ -24,10 +24,7 @@
       "./extensions/index.ts"
     ],
     "skills": [],
-    "prompts": [],
-    "themes": [
-      "./themes"
-    ]
+    "prompts": []
   },
   "license": "MIT",
   "packageManager": "pnpm@11.14.0",

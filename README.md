@@ -213,6 +213,5 @@ Project settings override global settings.
 ## References
 
 - [melihmucuk/leash](https://github.com/melihmucuk/leash)
-- [vinyroli/pi-codex-theme](https://github.com/vinyroli/pi-codex-theme)
 - [ajarellanod/pi-usage-bars](https://github.com/ajarellanod/pi-usage-bars)
 - [Winds-AI/pi-native-codex-web-search](https://github.com/Winds-AI/pi-native-codex-web-search)

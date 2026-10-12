@@ -6,7 +6,6 @@ import editorExtension from "./editor";
 import harmfulCommandGuardExtension from "./harmful-command-guard";
 import hashlineExtension from "./hashline";
 import otelExporterExtension from "./otel-exporter";
-import patchThemeExtension from "./patch-theme";
 import planModeExtension from "./plan-mode";
 import statusCommandExtension from "./status-command";
 import semanticDisciplineExtension from "./semantic-discipline";
@@ -14,7 +13,6 @@ import statusbarExtension from "./statusbar";
 import systemPromptCleanupExtension from "./system-prompt-cleanup";
 import systemPromptCommandExtension from "./system-prompt-command";
 import todoExtension from "./todo";
-import transcriptExtension from "./transcript";
 import usageCommandExtension from "./usage-command";
 import webSearchExtension from "./web-search";
 import welcomeExtension from "./welcome";
@@ -29,8 +27,6 @@ function composeExtensions(...extensions: ExtensionFactory[]): ExtensionFactory 
 
 export default composeExtensions(
 	welcomeExtension,
-	patchThemeExtension,
-	transcriptExtension,
 	harmfulCommandGuardExtension,
 	commentGuardExtension,
 	semanticDisciplineExtension,
