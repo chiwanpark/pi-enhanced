@@ -6,7 +6,6 @@ import editorExtension from "./editor";
 import harmfulCommandGuardExtension from "./harmful-command-guard";
 import hashlineExtension from "./hashline";
 import otelExporterExtension from "./otel-exporter";
-import statusCommandExtension from "./status-command";
 import semanticDisciplineExtension from "./semantic-discipline";
 import statusbarExtension from "./statusbar";
 import systemPromptCleanupExtension from "./system-prompt-cleanup";
@@ -35,7 +34,6 @@ export default composeExtensions(
 	webSearchExtension,
 	editorExtension,
 	statusbarExtension,
-	statusCommandExtension,
 	usageCommandExtension,
 	otelExporterExtension,
 	systemPromptCommandExtension,

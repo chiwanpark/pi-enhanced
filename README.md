@@ -16,7 +16,6 @@ pi install git:https://github.com/chiwanpark/pi-enhanced
 ## Commands
 
 - `/usage`: Shows the rolling limits (5h / weekly, or the provider equivalent) and the credit balance of every logged-in provider, together with the account each one belongs to. Model-scoped windows (e.g. Claude's per-model weekly limit) are listed as extra rows, and credit-metered plans (e.g. Codex Business/Enterprise workspaces, Claude extra usage) report a credits row instead of rolling windows.
-- `/status`: Shows the current model, directory, `AGENTS.md` files, account, session id, and the limits of the active provider.
 - `/system-prompt`: Shows the current effective system prompt.
 - `/harmful`, `/comments`: Toggle harmful mode and the comment guard.
 
