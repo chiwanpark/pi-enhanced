@@ -242,7 +242,7 @@ test("a full turn exports claude code metrics and events over otlp", async () =>
 
 	await fire("session_start", { reason: "startup" }, ctx);
 	await fire("input", { text: "add a test", source: "interactive" }, ctx);
-	await fire("before_agent_start", { prompt: "add a test" }, ctx);
+	await fire("before_agent_start", { messageType: "user", prompt: "add a test" }, ctx);
 	await fire("agent_start", {}, ctx);
 	await fire("turn_start", { turnIndex: 0, timestamp: Date.now() }, ctx);
 	await fire("before_provider_request", { payload: {} }, ctx);
@@ -369,7 +369,7 @@ test("a blocked tool call reports a rejected decision instead of a result", asyn
 	const ctx = fakeCtx();
 
 	await fire("session_start", { reason: "startup" }, ctx);
-	await fire("before_agent_start", { prompt: "delete everything" }, ctx);
+	await fire("before_agent_start", { messageType: "user", prompt: "delete everything" }, ctx);
 	await fire("tool_execution_start", { toolCallId: "call-2", toolName: "edit", args: { path: "a.ts" } }, ctx);
 	// No tool_result event: the guard blocked the call before execution.
 	await fire(
@@ -443,7 +443,39 @@ test("disabled signals stop their exports", async () => {
 	const ctx = fakeCtx();
 
 	await fire("session_start", { reason: "startup" }, ctx);
-	await fire("before_agent_start", { prompt: "hi" }, ctx);
+	await fire("before_agent_start", { messageType: "user", prompt: "hi" }, ctx);
+	await fire("message_end", { message: assistantMessage() }, ctx);
+	await fire("session_shutdown", { reason: "quit" }, ctx);
+	await new Promise<void>((resolve) => server.close(() => resolve()));
+
+	const eventNames = logRecords(captures).records.map(eventName);
+	assert.equal(eventNames.includes("claude_code.user_prompt"), false);
+	assert.ok(eventNames.includes("claude_code.api_request"));
+});
+
+test("runs started by a custom message emit no user prompt", async () => {
+	const { server, port, captures } = await startCollector();
+	const config = buildOtelConfig(
+		{
+			CLAUDE_CODE_ENABLE_TELEMETRY: "1",
+			OTEL_LOGS_EXPORTER: "otlp",
+			OTEL_METRICS_EXPORTER: "none",
+			OTEL_EXPORTER_OTLP_PROTOCOL: "http/json",
+			OTEL_EXPORTER_OTLP_ENDPOINT: `http://127.0.0.1:${port}`,
+		},
+		[],
+	);
+
+	const { pi, fire } = fakePi();
+	createOtelExporter(config)(pi as never);
+	const ctx = fakeCtx();
+
+	await fire("session_start", { reason: "startup" }, ctx);
+	await fire(
+		"before_agent_start",
+		{ messageType: "custom", message: { role: "custom", customType: "x", content: "go", display: true } },
+		ctx,
+	);
 	await fire("message_end", { message: assistantMessage() }, ctx);
 	await fire("session_shutdown", { reason: "quit" }, ctx);
 	await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -649,7 +681,7 @@ test("harmful mode changes emit a permission mode event", async () => {
 
 	await fire("session_start", { reason: "startup" }, ctx);
 	entries.push({ type: "custom", customType: "harmful-mode", data: { active: true } });
-	await fire("before_agent_start", { prompt: "go" }, ctx);
+	await fire("before_agent_start", { messageType: "user", prompt: "go" }, ctx);
 	await fire("session_shutdown", { reason: "quit" }, ctx);
 	await new Promise<void>((resolve) => server.close(() => resolve()));
 
@@ -682,7 +714,7 @@ test("borrowed configuration exports nothing for a non anthropic session", async
 	const ctx = fakeCtx([], { id: "gpt-5.6-luna", provider: "openai-codex" });
 
 	await fire("session_start", { reason: "startup" }, ctx);
-	await fire("before_agent_start", { prompt: "add a test" }, ctx);
+	await fire("before_agent_start", { messageType: "user", prompt: "add a test" }, ctx);
 	await fire("message_end", { message: assistantMessage({ provider: "openai-codex", model: "gpt-5.6-luna" }) }, ctx);
 	await fire(
 		"tool_execution_start",
@@ -708,7 +740,7 @@ test("borrowed configuration still exports an anthropic session", async () => {
 	const ctx = fakeCtx();
 
 	await fire("session_start", { reason: "startup" }, ctx);
-	await fire("before_agent_start", { prompt: "add a test" }, ctx);
+	await fire("before_agent_start", { messageType: "user", prompt: "add a test" }, ctx);
 	await fire("message_end", { message: assistantMessage() }, ctx);
 	await fire("session_shutdown", { reason: "quit" }, ctx);
 	await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -724,7 +756,7 @@ test("claude through openrouter is skipped, even though the model is claude", as
 	const ctx = fakeCtx([], { id: "anthropic/claude-fable-5", provider: "openrouter" });
 
 	await fire("session_start", { reason: "startup" }, ctx);
-	await fire("before_agent_start", { prompt: "hi" }, ctx);
+	await fire("before_agent_start", { messageType: "user", prompt: "hi" }, ctx);
 	await fire(
 		"message_end",
 		{ message: assistantMessage({ provider: "openrouter", model: "anthropic/claude-fable-5" }) },

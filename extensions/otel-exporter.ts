@@ -326,6 +326,7 @@ export function createOtelExporter(config: OtelExporterConfig) {
 		pi.on(
 			"before_agent_start",
 			guard(async (event, ctx) => {
+				if (event.messageType !== "user") return;
 				promptId = randomUUID();
 				setPermissionMode(readPermissionMode(ctx), "shift_tab");
 				recordUserActivity(Date.now());
