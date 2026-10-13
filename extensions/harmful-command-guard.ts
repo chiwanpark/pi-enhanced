@@ -106,7 +106,7 @@ export default function harmfulCommandGuardExtension(pi: ExtensionAPI) {
 		if (ctx.hasUI) ctx.ui.notify(`${subject} blocked: ${reason}`, "error");
 		return {
 			block: true,
-			reason: `${subject} blocked: ${reason}\nWorking directory: ${ctx.cwd}\nRun /harmful to bypass this guard.`,
+			reason: `${subject} blocked: ${reason}\nWorking directory: ${ctx.cwd}\nIf this operation is necessary, ask the user to run the /harmful command to bypass this guard.`,
 		};
 	});
 }
