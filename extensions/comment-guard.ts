@@ -236,7 +236,7 @@ export default function commentGuardExtension(pi: ExtensionAPI) {
 				`${event.toolName} blocked: ${summary}.`,
 				details,
 				guidance,
-				"Run /comments to allow comments for this session branch.",
+				"If comments are necessary, ask the user to run the /comments command to allow comments for this session branch.",
 			].join("\n"),
 		};
 	});
