@@ -183,12 +183,16 @@ export function createOtelExporter(config: OtelExporterConfig) {
 		let lastErrorMessage: string | undefined;
 		let notifiedError = false;
 
-		function reportError(ctx: ExtensionContext | undefined, message: string): void {
+		function recordError(ctx: ExtensionContext | undefined, message: string): void {
 			lastErrorMessage = message;
-			tel()?.emitEvent("internal_error", { error: message, component: "otel-exporter" });
 			if (notifiedError || !ctx?.hasUI) return;
 			notifiedError = true;
 			ctx.ui.notify(`OTEL exporter: ${message}`, "warning");
+		}
+
+		function reportError(ctx: ExtensionContext | undefined, message: string): void {
+			recordError(ctx, message);
+			tel()?.emitEvent("internal_error", { error: message, component: "otel-exporter" });
 		}
 
 		/** Run a handler body without letting telemetry failures affect the agent. */
@@ -230,6 +234,7 @@ export function createOtelExporter(config: OtelExporterConfig) {
 					organizationId,
 				}),
 				onError: (message) => reportError(ctx, message),
+				onExportError: (message) => recordError(ctx, message),
 			});
 			return telemetry;
 		}

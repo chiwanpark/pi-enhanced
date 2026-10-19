@@ -7,6 +7,7 @@ import { test } from "node:test";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { EDITOR_INPUT_EVENT } from "../extensions/internal/editor-activity.ts";
 import { buildOtelConfig } from "../extensions/internal/otel/config.ts";
+import { describeExportError } from "../extensions/internal/otel/telemetry.ts";
 import { createOtelExporter } from "../extensions/otel-exporter.ts";
 
 function metricsOnlyConfig(port: number) {
@@ -522,6 +523,57 @@ test("the otel command explains a disabled exporter", async () => {
 	assert.match(notices[0]?.message ?? "", /enabled: no/);
 	assert.match(notices[0]?.message ?? "", /inactive: set piEnhanced.otelExporter.enabled/);
 	assert.equal(notices[0]?.level, "warning");
+});
+
+test("the otel command reports exports the collector rejects", async () => {
+	const requests: string[] = [];
+	const server = createServer((req, res) => {
+		req.resume();
+		req.on("end", () => {
+			requests.push(req.url ?? "");
+			res.writeHead(401, { "content-type": "application/json" });
+			res.end('{"error":"invalid token"}');
+		});
+	});
+	await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+	const port = (server.address() as { port: number }).port;
+	const config = buildOtelConfig(
+		{
+			CLAUDE_CODE_ENABLE_TELEMETRY: "1",
+			OTEL_METRICS_EXPORTER: "otlp",
+			OTEL_LOGS_EXPORTER: "otlp",
+			OTEL_EXPORTER_OTLP_PROTOCOL: "http/json",
+			OTEL_EXPORTER_OTLP_ENDPOINT: `http://127.0.0.1:${port}`,
+		},
+		[],
+	);
+
+	const { pi, fire, commands } = fakePi();
+	createOtelExporter(config)(pi as never);
+	const notices: { message: string; level: string }[] = [];
+	const ctx = fakeCtx([], { id: "claude-sonnet-5", provider: "anthropic" }, notices);
+
+	await fire("session_start", { reason: "startup" }, ctx);
+	await fire("before_agent_start", { messageType: "user", prompt: "hi" }, ctx);
+	await fire("message_end", { message: assistantMessage() }, ctx);
+	await fire("session_shutdown", { reason: "quit" }, ctx);
+	await new Promise<void>((resolve) => server.close(() => resolve()));
+
+	await commands.get("otel")?.handler("", ctx);
+	const status = notices.at(-1);
+	assert.match(status?.message ?? "", /last error: (metrics|logs) export failed: HTTP 401: .*invalid token/);
+	assert.equal(status?.level, "warning");
+	assert.ok(requests.includes("/v1/metrics"));
+	assert.ok(requests.includes("/v1/logs"));
+});
+
+test("export errors carry the http status, message, and a bounded response body", () => {
+	const error = Object.assign(new Error("Unauthorized"), { code: 401, data: `{"error":"${"x".repeat(500)}"}` });
+	const message = describeExportError("metrics", error);
+	assert.match(message, /^metrics export failed: HTTP 401: Unauthorized: \{"error":"x+$/);
+	assert.ok(message.length < 260);
+	assert.equal(describeExportError("logs", new Error("socket hang up")), "logs export failed: socket hang up");
+	assert.equal(describeExportError("logs", undefined), "logs export failed: unknown error");
 });
 
 test("lines of code are measured from the real file change", async () => {

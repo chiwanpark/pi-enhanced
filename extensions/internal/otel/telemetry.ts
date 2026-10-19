@@ -5,6 +5,7 @@ import {
 	BatchLogRecordProcessor,
 	ConsoleLogRecordExporter,
 	LoggerProvider,
+	type LogRecordExporter,
 	type LogRecordProcessor,
 } from "@opentelemetry/sdk-logs";
 import {
@@ -42,6 +43,38 @@ export interface TelemetryInit {
 	serviceVersion: string;
 	standardAttributes: Record<string, unknown>;
 	onError?: (message: string) => void;
+	onExportError?: (message: string) => void;
+}
+
+type ExportOutcome = { code: number; error?: Error };
+type ExportCallback = (result: ExportOutcome) => void;
+
+const EXPORT_SUCCESS = 0;
+const MAX_ERROR_BODY_LENGTH = 200;
+
+export function describeExportError(signal: "metrics" | "logs", error: Error | undefined): string {
+	const { code, data } = (error ?? {}) as { code?: unknown; data?: unknown };
+	const parts = [
+		typeof code === "number" ? `HTTP ${code}` : undefined,
+		error?.message.trim() || undefined,
+		typeof data === "string" ? data.trim().slice(0, MAX_ERROR_BODY_LENGTH) || undefined : undefined,
+	].filter((part) => part !== undefined);
+	return `${signal} export failed: ${parts.join(": ") || "unknown error"}`;
+}
+
+function reportExportFailures<T extends PushMetricExporter | LogRecordExporter>(
+	exporter: T,
+	signal: "metrics" | "logs",
+	onExportError: (message: string) => void,
+): T {
+	const exportItems = exporter.export.bind(exporter) as (items: unknown, resultCallback: ExportCallback) => void;
+	const wrapped = (items: unknown, resultCallback: ExportCallback) =>
+		exportItems(items, (result) => {
+			if (result.code !== EXPORT_SUCCESS) onExportError(describeExportError(signal, result.error));
+			resultCallback(result);
+		});
+	exporter.export = wrapped as T["export"];
+	return exporter;
 }
 
 type MetricCounters = {
@@ -85,26 +118,35 @@ function signalOptions(config: OtelExporterConfig, signal: "metrics" | "logs") {
 	};
 }
 
-async function createOtlpMetricExporter(config: OtelExporterConfig): Promise<PushMetricExporter> {
+async function createOtlpMetricExporter(
+	config: OtelExporterConfig,
+	onExportError: (message: string) => void,
+): Promise<PushMetricExporter> {
 	const options = {
 		...signalOptions(config, "metrics"),
 		temporalityPreference:
 			config.temporalityPreference === "cumulative" ? AggregationTemporality.CUMULATIVE : AggregationTemporality.DELTA,
 	};
 
-	switch (resolveSignalProtocol(config, "metrics")) {
-		case "grpc":
-			return new (await import("@opentelemetry/exporter-metrics-otlp-grpc")).OTLPMetricExporter(options);
-		case "http/json":
-			return new (await import("@opentelemetry/exporter-metrics-otlp-http")).OTLPMetricExporter(options);
-		default:
-			return new (await import("@opentelemetry/exporter-metrics-otlp-proto")).OTLPMetricExporter(options);
-	}
+	const exporter = await (async (): Promise<PushMetricExporter> => {
+		switch (resolveSignalProtocol(config, "metrics")) {
+			case "grpc":
+				return new (await import("@opentelemetry/exporter-metrics-otlp-grpc")).OTLPMetricExporter(options);
+			case "http/json":
+				return new (await import("@opentelemetry/exporter-metrics-otlp-http")).OTLPMetricExporter(options);
+			default:
+				return new (await import("@opentelemetry/exporter-metrics-otlp-proto")).OTLPMetricExporter(options);
+		}
+	})();
+	return reportExportFailures(exporter, "metrics", onExportError);
 }
 
-async function createOtlpLogProcessor(config: OtelExporterConfig): Promise<LogRecordProcessor> {
+async function createOtlpLogProcessor(
+	config: OtelExporterConfig,
+	onExportError: (message: string) => void,
+): Promise<LogRecordProcessor> {
 	const options = signalOptions(config, "logs");
-	const exporter = await (async () => {
+	const exporter = await (async (): Promise<LogRecordExporter> => {
 		switch (resolveSignalProtocol(config, "logs")) {
 			case "grpc":
 				return new (await import("@opentelemetry/exporter-logs-otlp-grpc")).OTLPLogExporter(options);
@@ -115,17 +157,24 @@ async function createOtlpLogProcessor(config: OtelExporterConfig): Promise<LogRe
 		}
 	})();
 
-	return new BatchLogRecordProcessor({ exporter, scheduledDelayMillis: config.logsExportIntervalMillis });
+	return new BatchLogRecordProcessor({
+		exporter: reportExportFailures(exporter, "logs", onExportError),
+		scheduledDelayMillis: config.logsExportIntervalMillis,
+	});
 }
 
-async function createMetricReaders(config: OtelExporterConfig, onError: (message: string) => void) {
+async function createMetricReaders(
+	config: OtelExporterConfig,
+	onError: (message: string) => void,
+	onExportError: (message: string) => void,
+) {
 	const readers: IMetricReader[] = [];
 	for (const kind of config.metricsExporters) {
 		try {
 			if (kind === "otlp") {
 				readers.push(
 					new PeriodicExportingMetricReader({
-						exporter: await createOtlpMetricExporter(config),
+						exporter: await createOtlpMetricExporter(config, onExportError),
 						exportIntervalMillis: config.metricExportIntervalMillis,
 					}),
 				);
@@ -147,11 +196,15 @@ async function createMetricReaders(config: OtelExporterConfig, onError: (message
 	return readers;
 }
 
-async function createLogProcessors(config: OtelExporterConfig, onError: (message: string) => void) {
+async function createLogProcessors(
+	config: OtelExporterConfig,
+	onError: (message: string) => void,
+	onExportError: (message: string) => void,
+) {
 	const processors: LogRecordProcessor[] = [];
 	for (const kind of config.logsExporters) {
 		try {
-			if (kind === "otlp") processors.push(await createOtlpLogProcessor(config));
+			if (kind === "otlp") processors.push(await createOtlpLogProcessor(config, onExportError));
 			else if (kind === "console") {
 				processors.push(new BatchLogRecordProcessor({ exporter: new ConsoleLogRecordExporter() }));
 			}
@@ -171,6 +224,7 @@ export class OtelTelemetry {
 	private readonly config: OtelExporterConfig;
 	private readonly serviceVersion: string;
 	private readonly onError: (message: string) => void;
+	private readonly onExportError: (message: string) => void;
 	private readonly attributeBase: Attributes;
 	private meterProvider: MeterProvider | undefined;
 	private loggerProvider: LoggerProvider | undefined;
@@ -185,6 +239,7 @@ export class OtelTelemetry {
 		this.config = init.config;
 		this.serviceVersion = init.serviceVersion;
 		this.onError = init.onError ?? (() => {});
+		this.onExportError = init.onExportError ?? this.onError;
 		this.attributeBase = sanitizeAttributes(init.standardAttributes);
 		this.readyPromise = this.start();
 	}
@@ -200,8 +255,8 @@ export class OtelTelemetry {
 					: {}),
 				...this.config.resourceAttributes,
 			});
-			const readers = await createMetricReaders(this.config, this.onError);
-			const processors = await createLogProcessors(this.config, this.onError);
+			const readers = await createMetricReaders(this.config, this.onError, this.onExportError);
+			const processors = await createLogProcessors(this.config, this.onError, this.onExportError);
 
 			if (readers.length > 0) {
 				this.meterProvider = new MeterProvider({ resource, readers });
