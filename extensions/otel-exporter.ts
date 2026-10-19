@@ -171,7 +171,10 @@ export function createOtelExporter(config: OtelExporterConfig) {
 
 		let telemetry: TelemetrySink | undefined;
 		let sessionCtx: ExtensionContext | undefined;
-		const identityOptions = { claudeCode: config.useClaudeCodeIdentity };
+		const identityOptions = {
+			claudeCode: config.useClaudeCodeIdentity,
+			configured: { userId: config.userId, email: config.userEmail, accountUuid: config.accountUuid },
+		};
 		let identity = loadIdentity(undefined, identityOptions);
 		let organizationId = resolveOrganizationId(config.organizationId, process.env, identity.organizationId);
 		let activeProvider: string | undefined;

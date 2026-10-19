@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -290,4 +290,42 @@ test("the adopted identity wins over pi's own anonymous id", () => {
 	const own = loadIdentity(undefined, { home, identityFile });
 	assert.notEqual(own.userId, "claude-user");
 	assert.equal(own.organizationId, undefined);
+});
+
+test("configured identity values win over the adopted claude code identity", () => {
+	const { home, root } = scratch();
+	writeSettings(path.join(home, ".claude.json"), {
+		userID: "claude-user",
+		oauthAccount: { accountUuid: "acct-claude", emailAddress: "dev@corp.example.com", organizationUuid: "org-claude" },
+	});
+	const identityFile = path.join(root, "pi-enhanced-otel.json");
+
+	const partial = loadIdentity(undefined, {
+		claudeCode: true,
+		home,
+		identityFile,
+		configured: { email: "me@corp.example.com" },
+	});
+	assert.deepEqual(partial, {
+		userId: "claude-user",
+		email: "me@corp.example.com",
+		accountUuid: "acct-claude",
+		organizationId: "org-claude",
+	});
+
+	const full = loadIdentity(undefined, {
+		claudeCode: true,
+		home,
+		identityFile,
+		configured: { userId: "me", email: "me@corp.example.com", accountUuid: "acct-me" },
+	});
+	assert.deepEqual(full, {
+		userId: "me",
+		email: "me@corp.example.com",
+		accountUuid: "acct-me",
+		organizationId: "org-claude",
+	});
+
+	loadIdentity(undefined, { home, identityFile, configured: { userId: "me" } });
+	assert.equal(existsSync(identityFile), false, "a configured user id must not create pi's own id file");
 });

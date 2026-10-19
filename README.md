@@ -150,6 +150,9 @@ Project settings override global settings.
   - `prometheusHost`, `prometheusPort`: Scrape endpoint for the Prometheus exporter (default: `"localhost"`, 9464).
   - `resourceAttributes`: Extra attributes merged with `OTEL_RESOURCE_ATTRIBUTES`.
   - `organizationId`: Value of the `organization.id` attribute, the equivalent of `CLAUDE_CODE_ORGANIZATION_ID`. Never guessed from the user's email (default: unset).
+  - `userId`: Value of the `user.id` attribute. It wins over Claude Code's `userID` and pi's own anonymous id (default: unset).
+  - `userEmail`: Value of the `user.email` attribute. It wins over the email adopted from Claude Code, the provider account, and `git config user.email` (default: unset).
+  - `accountUuid`: Value of the `user.account_uuid` attribute, from which `user.account_id` is derived. It wins over the account adopted from Claude Code and the provider account, and is still subject to `includeAccountUuid` (default: unset).
   - `includeHostAttributes`: Attach the `os.type`, `os.version`, and `host.arch` resource attributes (default: true).
   - `includeSessionId`, `includeVersion`, `includeEntrypoint`, `includeAccountUuid`, `includeResourceAttributes`: Attribute cardinality controls, applied to metrics and events alike as Claude Code does (defaults: true, false, false, true, true).
   - `logUserPrompts`, `logAssistantResponses`, `logToolDetails`: Content opt-ins (default: false). `logAssistantResponses` follows `logUserPrompts` when unset.

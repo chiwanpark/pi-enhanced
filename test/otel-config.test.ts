@@ -136,6 +136,35 @@ test("host attributes and organization id are configurable", () => {
 	assert.equal(fromEnv.organizationId, "org-env");
 });
 
+test("the user identity is configurable from settings", () => {
+	const defaults = build({});
+	assert.equal(defaults.userId, undefined);
+	assert.equal(defaults.userEmail, undefined);
+	assert.equal(defaults.accountUuid, undefined);
+
+	const configured = build({}, [
+		{ otelExporter: { userId: " user-7 ", userEmail: " dev@corp.example.com ", accountUuid: " acct-7 " } },
+	]);
+	assert.equal(configured.userId, "user-7");
+	assert.equal(configured.userEmail, "dev@corp.example.com");
+	assert.equal(configured.accountUuid, "acct-7");
+
+	const projectOverride = build({}, [
+		{ otelExporter: { userEmail: "global@corp.example.com", userId: "global-user" } },
+		{ otelExporter: { userEmail: "project@corp.example.com" } },
+	]);
+	assert.equal(projectOverride.userEmail, "project@corp.example.com");
+	assert.equal(projectOverride.userId, "global-user");
+
+	const blankProject = build({}, [
+		{ otelExporter: { userEmail: "global@corp.example.com" } },
+		{ otelExporter: { userEmail: "  " } },
+	]);
+	assert.equal(blankProject.userEmail, "global@corp.example.com");
+	assert.equal(build({}, [{ otelExporter: { userId: 42 } }]).userId, undefined);
+	assert.equal(build({}, [{ otelExporter: { accountUuid: true } }]).accountUuid, undefined);
+});
+
 test("per-signal endpoints and protocols override the generic ones", () => {
 	const config = build({
 		OTEL_EXPORTER_OTLP_PROTOCOL: "grpc",

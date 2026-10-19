@@ -15,10 +15,13 @@ export interface OtelIdentity {
 	organizationId: string | undefined;
 }
 
+export type ConfiguredIdentity = Partial<Record<"userId" | "email" | "accountUuid", string | undefined>>;
+
 export interface IdentityOptions {
 	identityFile?: string;
 	claudeCode?: boolean;
 	home?: string;
+	configured?: ConfiguredIdentity | undefined;
 }
 
 type IdentityFile = {
@@ -85,9 +88,9 @@ export function readAccountIdentity(
 }
 
 /**
- * Identity for the standard attributes. With `claudeCode` on, the values Claude Code reports on this
- * machine win, so pi's rows join the ones its dashboards already group; the provider account and pi's
- * own anonymous id fill whatever Claude Code leaves unknown.
+ * Identity for the standard attributes. Configured values always win. With `claudeCode` on, the
+ * values Claude Code reports on this machine come next, so pi's rows join the ones its dashboards
+ * already group; the provider account and pi's own anonymous id fill whatever is still unknown.
  */
 export function loadIdentity(provider: string | undefined, options: IdentityOptions = {}): OtelIdentity {
 	let auth: AuthData | null;
@@ -98,11 +101,12 @@ export function loadIdentity(provider: string | undefined, options: IdentityOpti
 	}
 	const account = readAccountIdentity(provider, auth);
 	const claudeCode = options.claudeCode ? readClaudeCodeIdentity(options.home) : undefined;
+	const configured = options.configured ?? {};
 
 	return {
-		userId: claudeCode?.userId ?? loadOrCreateUserId(options.identityFile ?? OTEL_IDENTITY_FILE),
-		email: claudeCode?.email ?? account.email,
-		accountUuid: claudeCode?.accountUuid ?? account.accountUuid,
+		userId: configured.userId ?? claudeCode?.userId ?? loadOrCreateUserId(options.identityFile ?? OTEL_IDENTITY_FILE),
+		email: configured.email ?? claudeCode?.email ?? account.email,
+		accountUuid: configured.accountUuid ?? claudeCode?.accountUuid ?? account.accountUuid,
 		organizationId: claudeCode?.organizationId,
 	};
 }

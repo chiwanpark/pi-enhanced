@@ -75,6 +75,9 @@ export interface OtelExporterConfig {
 	useClaudeCodeIdentity: boolean;
 	/** Value for the `organization.id` attribute, which pi cannot derive on its own. */
 	organizationId: string | undefined;
+	userId: string | undefined;
+	userEmail: string | undefined;
+	accountUuid: string | undefined;
 	/** Attach `os.*` and `host.*` resource attributes for fleet-level grouping. */
 	includeHostAttributes: boolean;
 	/**
@@ -121,6 +124,9 @@ function defaultConfig(defaults: OtelConfigDefaults = {}): OtelExporterConfig {
 		discoverClaudeCodeSettings: false,
 		useClaudeCodeIdentity: defaults.useClaudeCodeIdentity ?? false,
 		organizationId: undefined,
+		userId: undefined,
+		userEmail: undefined,
+		accountUuid: undefined,
 		includeHostAttributes: true,
 		restrictToAnthropicProvider: defaults.restrictToAnthropicProvider ?? false,
 		serviceName: defaults.serviceName ?? DEFAULT_SERVICE_NAME,
@@ -294,6 +300,9 @@ type OtelSettings = {
 	discoverClaudeCodeSettings?: unknown;
 	useClaudeCodeIdentity?: unknown;
 	organizationId?: unknown;
+	userId?: unknown;
+	userEmail?: unknown;
+	accountUuid?: unknown;
 	includeHostAttributes?: unknown;
 	restrictToAnthropicProvider?: unknown;
 	serviceName?: unknown;
@@ -402,6 +411,8 @@ export function settingsAsEnv(settings: OtelSettings): OtelEnv {
 	return env;
 }
 
+const IDENTITY_SETTING_KEYS = ["userId", "userEmail", "accountUuid"] as const;
+
 /**
  * Apply one settings section. Everything with an environment equivalent goes through `applyEnv`, so
  * a key cannot mean one thing in the environment and another in `settings.json`; the pi-specific
@@ -419,6 +430,10 @@ function applySettings(config: OtelExporterConfig, settings: OtelSettings | unde
 		next.restrictToAnthropicProvider = settings.restrictToAnthropicProvider;
 	}
 	if (typeof settings.includeHostAttributes === "boolean") next.includeHostAttributes = settings.includeHostAttributes;
+	for (const key of IDENTITY_SETTING_KEYS) {
+		const value = settings[key];
+		if (typeof value === "string") next[key] = trimmedString(value) ?? next[key];
+	}
 
 	next.metrics = toggleRecord(settings.metrics, next.metrics, METRIC_SIGNALS);
 	next.events = toggleRecord(settings.events, next.events, EVENT_SIGNALS);

@@ -576,6 +576,36 @@ test("export errors carry the http status, message, and a bounded response body"
 	assert.equal(describeExportError("logs", undefined), "logs export failed: unknown error");
 });
 
+test("configured identity values are reported on metrics and in the otel command", async () => {
+	const { server, port, captures } = await startCollector();
+	const config = {
+		...metricsOnlyConfig(port),
+		userId: "user-me",
+		userEmail: "me@corp.example.com",
+		accountUuid: "11111111-2222-4333-8444-555555555555",
+		organizationId: "org-me",
+	};
+
+	const { pi, fire, commands } = fakePi();
+	createOtelExporter(config)(pi as never);
+	const notices: { message: string; level: string }[] = [];
+	const ctx = fakeCtx([], { id: "claude-sonnet-5", provider: "anthropic" }, notices);
+
+	await fire("session_start", { reason: "startup" }, ctx);
+	await commands.get("otel")?.handler("", ctx);
+	await fire("session_shutdown", { reason: "quit" }, ctx);
+	await new Promise<void>((resolve) => server.close(() => resolve()));
+
+	assert.match(notices[0]?.message ?? "", /identity: me@corp\.example\.com/);
+	const attributes = metricPoints(captures, "claude_code.session.count")[0]?.attributes;
+	assert.ok(attributes, "expected a session metric");
+	assert.equal(attributes["user.id"], "user-me");
+	assert.equal(attributes["user.email"], "me@corp.example.com");
+	assert.equal(attributes["user.account_uuid"], "11111111-2222-4333-8444-555555555555");
+	assert.match(String(attributes["user.account_id"]), /^user_01/);
+	assert.equal(attributes["organization.id"], "org-me");
+});
+
 test("lines of code are measured from the real file change", async () => {
 	const dir = await mkdtemp(join(tmpdir(), "otel-lines-"));
 	const file = join(dir, "app.ts");
