@@ -17,24 +17,78 @@ type ProviderRuntimeState = {
 };
 
 const DEFAULT_USAGE_REFRESH_INTERVAL_MS = 2 * 60 * 1000;
+const DEFAULT_COMPACT_WIDTH = 80;
+
+export const STATUSBAR_SEGMENTS = ["model", "usage", "cwd", "branch", "context"] as const;
+
+export type StatusbarSegment = (typeof STATUSBAR_SEGMENTS)[number];
 
 export type StatusbarConfig = {
 	usageRefreshIntervalMs: number;
+	lines: StatusbarSegment[][];
+	compactLines?: StatusbarSegment[][] | undefined;
+	compactWidth: number;
 };
 
 type StatusbarSettings = {
 	usageRefreshIntervalMs?: unknown;
+	lines?: unknown;
+	compactLines?: unknown;
+	compactWidth?: unknown;
 };
 
+function readNonNegativeInteger(value: unknown): number | undefined {
+	return typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.floor(value) : undefined;
+}
+
+function isStatusbarSegment(value: unknown): value is StatusbarSegment {
+	return typeof value === "string" && (STATUSBAR_SEGMENTS as readonly string[]).includes(value);
+}
+
+function parseLines(value: unknown): StatusbarSegment[][] | undefined {
+	if (!Array.isArray(value) || !value.every((line) => Array.isArray(line))) return undefined;
+	const lines = (value as unknown[][]).map((line) => line.filter(isStatusbarSegment)).filter((line) => line.length > 0);
+	if (lines.length === 0 && value.length > 0) return undefined;
+	return lines;
+}
+
 export function loadStatusbarConfig(cwd: string): StatusbarConfig {
-	const config: StatusbarConfig = { usageRefreshIntervalMs: DEFAULT_USAGE_REFRESH_INTERVAL_MS };
+	const config: StatusbarConfig = {
+		usageRefreshIntervalMs: DEFAULT_USAGE_REFRESH_INTERVAL_MS,
+		lines: [[...STATUSBAR_SEGMENTS]],
+		compactWidth: DEFAULT_COMPACT_WIDTH,
+	};
 	for (const section of readPiEnhancedSettings(cwd)) {
-		const interval = (section as { statusbar?: StatusbarSettings }).statusbar?.usageRefreshIntervalMs;
-		if (typeof interval === "number" && Number.isFinite(interval) && interval >= 0) {
-			config.usageRefreshIntervalMs = Math.floor(interval);
-		}
+		const statusbar = (section as { statusbar?: StatusbarSettings }).statusbar;
+		const interval = readNonNegativeInteger(statusbar?.usageRefreshIntervalMs);
+		if (interval != null) config.usageRefreshIntervalMs = interval;
+		const lines = parseLines(statusbar?.lines);
+		if (lines) config.lines = lines;
+		const compactLines = parseLines(statusbar?.compactLines);
+		if (compactLines) config.compactLines = compactLines;
+		const compactWidth = readNonNegativeInteger(statusbar?.compactWidth);
+		if (compactWidth != null) config.compactWidth = compactWidth;
 	}
 	return config;
+}
+
+export function selectStatusbarLines(config: StatusbarConfig, width: number): StatusbarSegment[][] {
+	return config.compactLines && width < config.compactWidth ? config.compactLines : config.lines;
+}
+
+export function layoutStatusbarLines(
+	lines: readonly (readonly StatusbarSegment[])[],
+	segments: Partial<Record<StatusbarSegment, string | null | undefined>>,
+	separator: string,
+): string[] {
+	return lines
+		.map((line) => line.map((segment) => segments[segment]).filter((text): text is string => Boolean(text)))
+		.filter((texts) => texts.length > 0)
+		.map((texts) => texts.join(separator));
+}
+
+function configIncludes(config: StatusbarConfig, segment: StatusbarSegment): boolean {
+	return [...config.lines, ...(config.compactLines ?? [])].some((line) => line.includes(segment));
 }
 
 function clampPercent(value: number | null | undefined): number | null {
@@ -185,10 +239,15 @@ export default function statusbarExtension(pi: ExtensionAPI) {
 	let requestRender: (() => void) | undefined;
 	let activeProvider: SupportedProvider | null = null;
 	const usageState = new Map<SupportedProvider, ProviderRuntimeState>();
+	let config: StatusbarConfig = {
+		usageRefreshIntervalMs: DEFAULT_USAGE_REFRESH_INTERVAL_MS,
+		lines: [],
+		compactWidth: DEFAULT_COMPACT_WIDTH,
+	};
 
 	async function refreshUsage(force = false): Promise<void> {
 		const provider = activeProvider;
-		if (!provider) return;
+		if (!provider || !configIncludes(config, "usage")) return;
 
 		const previous = usageState.get(provider);
 		if (!force && previous?.loading) return;
@@ -248,6 +307,7 @@ export default function statusbarExtension(pi: ExtensionAPI) {
 		if (ctx.mode !== "tui") return;
 
 		updateActiveProvider(ctx.model?.provider);
+		config = loadStatusbarConfig(ctx.cwd);
 
 		ctx.ui.setFooter((tui, theme, footerData) => {
 			requestRender = () => tui.requestRender();
@@ -278,28 +338,29 @@ export default function statusbarExtension(pi: ExtensionAPI) {
 					const contextUsage = ctx.getContextUsage();
 					const contextWindow = contextUsage?.contextWindow ?? ctx.model?.contextWindow;
 
-					const segments = [
-						`${theme.fg("dim", `(${lastProviderLabel})`)} ${theme.bold(lastModelId)} ${theme.fg("accent", lastThinking)}`,
-					];
-
 					const usageSegment = activeProvider
 						? formatUsageSegment(theme, providerState?.data, providerState?.error)
 						: null;
-					if (usageSegment) segments.push(usageSegment);
-
-					segments.push(theme.fg("dim", cwd));
-					if (branch) segments.push(theme.fg("dim", branch));
-
 					const contextSegment = formatContextSegment(
 						theme,
 						contextUsage?.percent,
 						contextUsage?.tokens,
 						contextWindow,
 					);
-					if (contextSegment) segments.push(contextSegment);
 
-					const line = segments.join(theme.fg("dim", " · "));
-					return [truncateToWidth(line, width, theme.fg("dim", "…")), ""];
+					const lines = layoutStatusbarLines(
+						selectStatusbarLines(config, width),
+						{
+							model: `${theme.fg("dim", `(${lastProviderLabel})`)} ${theme.bold(lastModelId)} ${theme.fg("accent", lastThinking)}`,
+							usage: usageSegment,
+							cwd: theme.fg("dim", cwd),
+							branch: branch ? theme.fg("dim", branch) : null,
+							context: contextSegment,
+						},
+						theme.fg("dim", " · "),
+					);
+					if (lines.length === 0) return [];
+					return [...lines.map((line) => truncateToWidth(line, width, theme.fg("dim", "…"))), ""];
 				},
 				invalidate() {},
 				dispose() {
@@ -317,11 +378,10 @@ export default function statusbarExtension(pi: ExtensionAPI) {
 			clearInterval(pollTimer);
 			pollTimer = undefined;
 		}
-		const { usageRefreshIntervalMs } = loadStatusbarConfig(ctx.cwd);
-		if (usageRefreshIntervalMs <= 0) return;
+		if (config.usageRefreshIntervalMs <= 0 || !configIncludes(config, "usage")) return;
 		pollTimer = setInterval(() => {
 			void queueRefresh(false);
-		}, usageRefreshIntervalMs);
+		}, config.usageRefreshIntervalMs);
 	});
 
 	pi.on("model_select", async (event, ctx) => {

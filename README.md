@@ -135,6 +135,9 @@ Project settings override global settings.
   - `reasoningEffort`: Reasoning effort sent with the search request: `"none"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, or `"max"`. Unset leaves the effort to the provider default.
 - `statusbar`: Configures the bottom status bar.
   - `usageRefreshIntervalMs`: Interval in milliseconds between periodic refreshes of the provider usage limits (default: 120000). Set it to `0` to disable periodic refresh; the limits are still refreshed at session start, on provider switch, and after each prompt finishes.
+  - `lines`: Layout of the status bar as an array of lines, each listing the segments to show in order (default: `[["model", "usage", "cwd", "branch", "context"]]`). Segments are `model` (provider, model, and thinking level), `usage` (provider usage limits), `cwd`, `branch`, and `context` (context window usage). Omitted segments are hidden, unknown names are ignored, and lines with nothing to show are skipped. Leaving out `usage` from every layout also stops fetching the usage limits, and `[]` hides the status bar.
+  - `compactLines`: Layout used instead of `lines` while the terminal is narrower than `compactWidth`, e.g. on a phone (default: unset, so `lines` is always used). It takes the same form as `lines`.
+  - `compactWidth`: Terminal width in columns below which `compactLines` is used (default: 80). The layout switches as the terminal is resized.
 - `otelExporter`: Configures the [OpenTelemetry exporter](#opentelemetry-exporter). Settings override the equivalent environment variables, and project settings override global ones.
   - `enabled`: Master switch, the equivalent of `CLAUDE_CODE_ENABLE_TELEMETRY` (default: false).
   - `discoverClaudeCodeSettings`: Adopt the telemetry `env` block from the Claude Code settings chain when the environment leaves a value unset (default: false). See [Reusing the Claude Code Destination](#reusing-the-claude-code-destination).
@@ -190,7 +193,13 @@ Project settings override global settings.
       "timeoutMs": 120000
     },
     "statusbar": {
-      "usageRefreshIntervalMs": 300000
+      "usageRefreshIntervalMs": 300000,
+      "lines": [
+        ["model", "usage"],
+        ["cwd", "branch", "context"]
+      ],
+      "compactLines": [["model"], ["usage"], ["context"]],
+      "compactWidth": 80
     },
     "otelExporter": {
       "enabled": true,
