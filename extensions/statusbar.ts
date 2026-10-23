@@ -1,13 +1,13 @@
 import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth } from "@earendil-works/pi-tui";
-import { withHomeTilde } from "./internal/common";
+import { readPiEnhancedSettings, withHomeTilde } from "./internal/common.ts";
 import {
 	loadUsage,
 	normalizeProvider,
 	PROVIDER_META,
 	type SupportedProvider,
 	type UsageInfo,
-} from "./internal/usage-status";
+} from "./internal/usage-status.ts";
 
 type ProviderRuntimeState = {
 	loading: boolean;
@@ -16,7 +16,26 @@ type ProviderRuntimeState = {
 	updatedAt?: number | undefined;
 };
 
-const POLL_INTERVAL_MS = 2 * 60 * 1000;
+const DEFAULT_USAGE_REFRESH_INTERVAL_MS = 2 * 60 * 1000;
+
+export type StatusbarConfig = {
+	usageRefreshIntervalMs: number;
+};
+
+type StatusbarSettings = {
+	usageRefreshIntervalMs?: unknown;
+};
+
+export function loadStatusbarConfig(cwd: string): StatusbarConfig {
+	const config: StatusbarConfig = { usageRefreshIntervalMs: DEFAULT_USAGE_REFRESH_INTERVAL_MS };
+	for (const section of readPiEnhancedSettings(cwd)) {
+		const interval = (section as { statusbar?: StatusbarSettings }).statusbar?.usageRefreshIntervalMs;
+		if (typeof interval === "number" && Number.isFinite(interval) && interval >= 0) {
+			config.usageRefreshIntervalMs = Math.floor(interval);
+		}
+	}
+	return config;
+}
 
 function clampPercent(value: number | null | undefined): number | null {
 	if (typeof value !== "number" || !Number.isFinite(value)) return null;
@@ -294,10 +313,15 @@ export default function statusbarExtension(pi: ExtensionAPI) {
 
 		await queueRefresh(true);
 
-		if (pollTimer) clearInterval(pollTimer);
+		if (pollTimer) {
+			clearInterval(pollTimer);
+			pollTimer = undefined;
+		}
+		const { usageRefreshIntervalMs } = loadStatusbarConfig(ctx.cwd);
+		if (usageRefreshIntervalMs <= 0) return;
 		pollTimer = setInterval(() => {
 			void queueRefresh(false);
-		}, POLL_INTERVAL_MS);
+		}, usageRefreshIntervalMs);
 	});
 
 	pi.on("model_select", async (event, ctx) => {

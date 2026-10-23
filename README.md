@@ -133,6 +133,8 @@ Project settings override global settings.
   - `timeoutMs`: Request timeout in milliseconds (default: 120000).
   - `endpoint`: Search API endpoint (default: `"https://chatgpt.com/backend-api/codex/responses"`).
   - `reasoningEffort`: Reasoning effort sent with the search request: `"none"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, or `"max"`. Unset leaves the effort to the provider default.
+- `statusbar`: Configures the bottom status bar.
+  - `usageRefreshIntervalMs`: Interval in milliseconds between periodic refreshes of the provider usage limits (default: 120000). Set it to `0` to disable periodic refresh; the limits are still refreshed at session start, on provider switch, and after each prompt finishes.
 - `otelExporter`: Configures the [OpenTelemetry exporter](#opentelemetry-exporter). Settings override the equivalent environment variables, and project settings override global ones.
   - `enabled`: Master switch, the equivalent of `CLAUDE_CODE_ENABLE_TELEMETRY` (default: false).
   - `discoverClaudeCodeSettings`: Adopt the telemetry `env` block from the Claude Code settings chain when the environment leaves a value unset (default: false). See [Reusing the Claude Code Destination](#reusing-the-claude-code-destination).
@@ -186,6 +188,9 @@ Project settings override global settings.
       "reasoningEffort": "low",
       "maxSources": 5,
       "timeoutMs": 120000
+    },
+    "statusbar": {
+      "usageRefreshIntervalMs": 300000
     },
     "otelExporter": {
       "enabled": true,
