@@ -330,7 +330,81 @@ export interface BackfillArgs {
 	yes: boolean;
 }
 
-export function parseBackfillArgs(args: readonly string[]): BackfillArgs | { error: string } {
+const UNIT_MS: Record<string, number> = {
+	s: 1_000,
+	sec: 1_000,
+	secs: 1_000,
+	second: 1_000,
+	seconds: 1_000,
+	m: 60_000,
+	min: 60_000,
+	mins: 60_000,
+	minute: 60_000,
+	minutes: 60_000,
+	h: 3_600_000,
+	hr: 3_600_000,
+	hrs: 3_600_000,
+	hour: 3_600_000,
+	hours: 3_600_000,
+	d: 86_400_000,
+	day: 86_400_000,
+	days: 86_400_000,
+	w: 604_800_000,
+	wk: 604_800_000,
+	wks: 604_800_000,
+	week: 604_800_000,
+	weeks: 604_800_000,
+};
+
+const CALENDAR_UNITS: Record<string, "month" | "year"> = {
+	month: "month",
+	months: "month",
+	mo: "month",
+	y: "year",
+	yr: "year",
+	yrs: "year",
+	year: "year",
+	years: "year",
+};
+
+function startOfLocalDay(ms: number, daysBack: number): number {
+	const date = new Date(ms);
+	date.setHours(0, 0, 0, 0);
+	date.setDate(date.getDate() - daysBack);
+	return date.getTime();
+}
+
+export function parseTimeExpression(text: string, nowMs: number): number | undefined {
+	const normalized = text
+		.trim()
+		.replace(/^["']|["']$/g, "")
+		.trim()
+		.toLowerCase()
+		.replace(/\s+/g, " ");
+	if (normalized.length === 0) return undefined;
+	if (normalized === "now") return nowMs;
+	if (normalized === "today") return startOfLocalDay(nowMs, 0);
+	if (normalized === "yesterday") return startOfLocalDay(nowMs, 1);
+
+	const relative = /^(\d+|an?) ?([a-z]+) ago$/.exec(normalized);
+	if (relative) {
+		const amount = /^\d+$/.test(relative[1] as string) ? Number(relative[1]) : 1;
+		const unit = relative[2] as string;
+		const unitMs = UNIT_MS[unit];
+		if (unitMs !== undefined) return nowMs - amount * unitMs;
+		const calendar = CALENDAR_UNITS[unit];
+		if (!calendar) return undefined;
+		const date = new Date(nowMs);
+		if (calendar === "month") date.setMonth(date.getMonth() - amount);
+		else date.setFullYear(date.getFullYear() - amount);
+		return date.getTime();
+	}
+
+	const absolute = Date.parse(text.trim().replace(/^["']|["']$/g, ""));
+	return Number.isFinite(absolute) ? absolute : undefined;
+}
+
+export function parseBackfillArgs(args: readonly string[], nowMs = Date.now()): BackfillArgs | { error: string } {
 	const result: BackfillArgs = { sinceMs: undefined, untilMs: undefined, dryRun: false, yes: false };
 	const tokens = args.filter((token) => token.length > 0);
 	for (let index = 0; index < tokens.length; index += 1) {
@@ -343,11 +417,19 @@ export function parseBackfillArgs(args: readonly string[]): BackfillArgs | { err
 			result.yes = true;
 			continue;
 		}
-		const [flag, inline] = token.split("=", 2) as [string, string | undefined];
+		const separator = token.indexOf("=");
+		const flag = separator >= 0 ? token.slice(0, separator) : token;
 		if (flag !== "--since" && flag !== "--until") return { error: `unknown option: ${token}` };
-		const value = inline ?? tokens[++index];
-		const ms = value === undefined ? Number.NaN : Date.parse(value);
-		if (!Number.isFinite(ms)) return { error: `${flag} needs a date such as 2026-10-01 or 2026-10-01T09:00:00Z` };
+		const words = separator >= 0 ? [token.slice(separator + 1)] : [];
+		while (index + 1 < tokens.length && !(tokens[index + 1] as string).startsWith("-")) {
+			words.push(tokens[++index] as string);
+		}
+		const ms = parseTimeExpression(words.join(" "), nowMs);
+		if (ms === undefined) {
+			return {
+				error: `${flag} needs a time such as now, today, yesterday, "2 days ago", "1 hour ago", or 2026-10-01T09:00:00Z`,
+			};
+		}
 		if (flag === "--since") result.sinceMs = ms;
 		else result.untilMs = ms;
 	}
@@ -379,13 +461,13 @@ export async function runBackfillCommand(
 		ctx.ui.notify("otel backfill: no exporter is active, run /otel to see why", "warning");
 		return;
 	}
-	const parsed = parseBackfillArgs(args);
+	const nowMs = (options.now ?? Date.now)();
+	const parsed = parseBackfillArgs(args, nowMs);
 	if ("error" in parsed) {
 		ctx.ui.notify(`otel backfill: ${parsed.error}`, "error");
 		return;
 	}
 
-	const nowMs = (options.now ?? Date.now)();
 	const window: TimeRange = {
 		startMs: parsed.sinceMs ?? 0,
 		endMs: Math.min(parsed.untilMs ?? nowMs, nowMs),

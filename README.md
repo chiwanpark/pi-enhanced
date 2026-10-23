@@ -107,8 +107,13 @@ Run `/otel` to see the active exporters, resolved endpoints, whether this sessio
 Run `/otel backfill` to export sessions saved before telemetry was working, using the current exporter configuration. It replays every session file under `~/.pi/agent/sessions` and asks for confirmation with the number of sessions, events, and metric updates it is about to send.
 
 ```text
-/otel backfill [--since 2026-10-01] [--until 2026-10-15T09:00:00Z] [--dry-run] [--yes]
+/otel backfill [--since <time>] [--until <time>] [--dry-run] [--yes]
+/otel backfill --since 2 days ago --until 1 hour ago
+/otel backfill --since yesterday --until today
+/otel backfill --since 2026-10-01 --until 2026-10-15T09:00:00Z
 ```
+
+A time is `now`, `today` or `yesterday` (local midnight), a relative `<n> <unit> ago` such as `an hour ago`, `30m ago`, `2 days ago`, or `3 weeks ago`, or any date `Date.parse` accepts. A bare date such as `2026-10-01` means midnight UTC.
 
 - Events keep their original timestamps, while metrics are stamped with the export time because OpenTelemetry counters cannot be backdated.
 - The same provider restriction, content flags, and identity as live export apply.

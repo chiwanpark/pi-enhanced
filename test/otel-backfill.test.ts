@@ -8,6 +8,7 @@ import type { FileEntry } from "@earendil-works/pi-coding-agent";
 import {
 	BACKFILL_LEDGER_FILE,
 	parseBackfillArgs,
+	parseTimeExpression,
 	readLedger,
 	replaySession,
 	runBackfillCommand,
@@ -253,6 +254,43 @@ test("backfill options accept dates and reject anything else", () => {
 	assert.ok("error" in parseBackfillArgs(["--since"]));
 	assert.ok("error" in parseBackfillArgs(["--force"]));
 	assert.ok("error" in parseBackfillArgs(["--since", "2026-10-02", "--until", "2026-10-01"]));
+});
+
+test("backfill times accept wordy relative expressions", () => {
+	const now = Date.parse("2026-10-23T15:30:00.000Z");
+	const midnight = new Date(now);
+	midnight.setHours(0, 0, 0, 0);
+	const yesterday = new Date(midnight);
+	yesterday.setDate(yesterday.getDate() - 1);
+	const monthAgo = new Date(now);
+	monthAgo.setMonth(monthAgo.getMonth() - 1);
+
+	assert.equal(parseTimeExpression("now", now), now);
+	assert.equal(parseTimeExpression("Today", now), midnight.getTime());
+	assert.equal(parseTimeExpression("yesterday", now), yesterday.getTime());
+	assert.equal(parseTimeExpression("1 hour ago", now), now - 3_600_000);
+	assert.equal(parseTimeExpression("an hour ago", now), now - 3_600_000);
+	assert.equal(parseTimeExpression("2 days ago", now), now - 2 * 86_400_000);
+	assert.equal(parseTimeExpression("30m ago", now), now - 30 * 60_000);
+	assert.equal(parseTimeExpression("3 weeks ago", now), now - 21 * 86_400_000);
+	assert.equal(parseTimeExpression("1 month ago", now), monthAgo.getTime());
+	assert.equal(parseTimeExpression('"2 days ago"', now), now - 2 * 86_400_000);
+	assert.equal(parseTimeExpression("2 fortnights ago", now), undefined);
+	assert.equal(parseTimeExpression("soon", now), undefined);
+
+	assert.deepEqual(parseBackfillArgs(["--since", "2", "days", "ago", "--until", "1", "hour", "ago", "--yes"], now), {
+		sinceMs: now - 2 * 86_400_000,
+		untilMs: now - 3_600_000,
+		dryRun: false,
+		yes: true,
+	});
+	assert.deepEqual(parseBackfillArgs(['--since="2', "days", 'ago"', "--until", "now"], now), {
+		sinceMs: now - 2 * 86_400_000,
+		untilMs: now,
+		dryRun: false,
+		yes: false,
+	});
+	assert.ok("error" in parseBackfillArgs(["--since", "today", "--until", "yesterday"], now));
 });
 
 test("the ledger round trips exported ranges per session", async () => {
