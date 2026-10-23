@@ -10,7 +10,7 @@ export interface TelemetrySink {
 	addTokens(type: string, tokens: number, extra: Record<string, unknown>): void;
 	addCodeEditDecision(extra: Record<string, unknown>): void;
 	addActiveTime(seconds: number, type: "user" | "cli"): void;
-	emitEvent(name: EventName, extra?: Record<string, unknown>): void;
+	emitEvent(name: EventName, extra?: Record<string, unknown>, timestampMs?: number): void;
 	forceFlush(): Promise<void>;
 	shutdown(): Promise<void>;
 }
@@ -41,10 +41,10 @@ export function createTelemetrySink(init: TelemetryInit): TelemetrySink {
 		addTokens: (type, tokens, extra) => run((target) => target.addTokens(type, tokens, extra)),
 		addCodeEditDecision: (extra) => run((target) => target.addCodeEditDecision(extra)),
 		addActiveTime: (seconds, type) => run((target) => target.addActiveTime(seconds, type)),
-		emitEvent: (name, extra) => {
+		emitEvent: (name, extra, timestampMs) => {
 			// Stamp the time at call time so queued events keep their real ordering and timestamps.
-			const timestampMs = Date.now();
-			run((target) => target.emitEvent(name, extra, timestampMs));
+			const stamp = timestampMs ?? Date.now();
+			run((target) => target.emitEvent(name, extra, stamp));
 		},
 		forceFlush: async () => {
 			await (await ready)?.forceFlush();

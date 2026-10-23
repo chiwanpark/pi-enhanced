@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { resolve as resolvePath } from "node:path";
-import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { generateUnifiedPatch, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getPackageVersion } from "./internal/common.ts";
 import { EDITOR_INPUT_EVENT, isEditorInputActivity } from "./internal/editor-activity.ts";
 import { ActiveTimeTracker } from "./internal/otel/active-time.ts";
 import { buildStandardAttributes } from "./internal/otel/attributes.ts";
+import { LIVE_EXPORT_ENTRY_TYPE, runBackfillCommand } from "./internal/otel/backfill.ts";
 import {
 	hasActiveExporter,
 	resolveOtelConfig,
@@ -14,26 +14,25 @@ import {
 } from "./internal/otel/config.ts";
 import { detectEntrypoint, detectTerminalType, loadIdentity, resolveOrganizationId } from "./internal/otel/identity.ts";
 import {
-	byteLength,
 	codeEditToolName,
-	commandCreatesCommit,
-	costUsdMicros,
 	diffLineCounts,
 	filePathFromToolInput,
 	isAnthropicProvider,
-	languageFromPath,
-	pullRequestsCreated,
-	serializeToolInput,
 	sessionStartType,
-	tokenUsageEntries,
-	toolErrorType,
-	toolParameters,
-	truncateContent,
 } from "./internal/otel/mappers.ts";
 import { gitUserEmail, readTextForDiff } from "./internal/otel/observe.ts";
+import {
+	detailsOf,
+	lineCountsFromDetails,
+	lineCountsFromWrittenContent,
+	recordAssistantMessage,
+	recordToolResult,
+	recordUserPrompt,
+	textFromContent,
+	type LineCounts,
+} from "./internal/otel/recorders.ts";
 import { createTelemetrySink, type TelemetrySink } from "./internal/otel/sink.ts";
 
-const REDACTED = "<REDACTED>";
 const HARMFUL_MODE_ENTRY_TYPE = "harmful-mode";
 const MAX_PENDING_REQUESTS = 32;
 
@@ -55,43 +54,12 @@ type ProviderRequest = {
 	requestId: string | undefined;
 };
 
-function textFromContent(content: unknown): string {
-	if (!Array.isArray(content)) return "";
-	const parts: string[] = [];
-	for (const block of content) {
-		if (!block || typeof block !== "object") continue;
-		const record = block as { type?: unknown; text?: unknown };
-		if (record.type === "text" && typeof record.text === "string") parts.push(record.text);
-	}
-	return parts.join("");
-}
-
-function assistantText(message: AssistantMessage): string {
-	return textFromContent(message.content);
-}
-
-function detailsOf(result: unknown): Record<string, unknown> | undefined {
-	if (!result || typeof result !== "object") return undefined;
-	const details = (result as { details?: unknown }).details;
-	if (!details || typeof details !== "object") return undefined;
-	return details as Record<string, unknown>;
-}
-
 function requestIdFromHeaders(headers: Record<string, string>): string | undefined {
 	for (const key of ["request-id", "x-request-id", "x-amzn-requestid"]) {
 		const value = headers[key];
 		if (typeof value === "string" && value.length > 0) return value;
 	}
 	return undefined;
-}
-
-function isShellTool(toolName: string): boolean {
-	return toolName === "bash" || toolName === "powershell";
-}
-
-function commandOf(input: unknown): string | undefined {
-	const command = (input as { command?: unknown } | undefined)?.command;
-	return typeof command === "string" ? command : undefined;
 }
 
 /**
@@ -103,25 +71,16 @@ async function countChangedLines(
 	run: ToolRun | undefined,
 	details: Record<string, unknown> | undefined,
 	input: unknown,
-): Promise<{ added: number; removed: number } | undefined> {
-	const added = details?.["addedLines"];
-	const removed = details?.["removedLines"];
-	if (typeof added === "number" || typeof removed === "number") {
-		return { added: typeof added === "number" ? added : 0, removed: typeof removed === "number" ? removed : 0 };
-	}
-	if (typeof details?.["patch"] === "string") return diffLineCounts(details["patch"] as string);
+): Promise<LineCounts | undefined> {
+	const reported = lineCountsFromDetails(details);
+	if (reported) return reported;
 
 	if (run?.filePath && run.contentBefore !== undefined) {
 		const after = await readTextForDiff(run.filePath);
 		if (after !== undefined) return diffLineCounts(generateUnifiedPatch(run.filePath, run.contentBefore, after));
 	}
 
-	// Last resort for a write with no snapshot: treat the written content as added lines.
-	const content = (input as { content?: unknown } | undefined)?.content;
-	if (typeof content === "string" && content.length > 0) {
-		return { added: content.split("\n").length, removed: 0 };
-	}
-	return undefined;
+	return lineCountsFromWrittenContent(input);
 }
 
 type StatusState = { exporting: boolean; identity: string | undefined; lastError: string | undefined };
@@ -132,8 +91,15 @@ type StatusState = { exporting: boolean; identity: string | undefined; lastError
  */
 function registerStatusCommand(pi: ExtensionAPI, config: OtelExporterConfig, state: () => StatusState): void {
 	pi.registerCommand("otel", {
-		description: "Show the OpenTelemetry exporter status, destination, and last error.",
-		handler: async (_args, ctx) => {
+		description: "Show the OpenTelemetry exporter status, or `/otel backfill` to export past sessions.",
+		getArgumentCompletions: (prefix) =>
+			"backfill".startsWith(prefix.trim()) ? [{ value: "backfill", label: "backfill" }] : null,
+		handler: async (args, ctx) => {
+			const [subcommand, ...rest] = args.trim().split(/\s+/);
+			if (subcommand === "backfill") {
+				await runBackfillCommand(rest, ctx, config);
+				return;
+			}
 			const { exporting, identity, lastError } = state();
 			const active = hasActiveExporter(config);
 			const lines = [
@@ -239,6 +205,11 @@ export function createOtelExporter(config: OtelExporterConfig) {
 				onError: (message) => reportError(ctx, message),
 				onExportError: (message) => recordError(ctx, message),
 			});
+			try {
+				pi.appendEntry(LIVE_EXPORT_ENTRY_TYPE, { sessionId: ctx.sessionManager.getSessionId() });
+			} catch (error) {
+				recordError(ctx, `failed to mark the live export: ${error instanceof Error ? error.message : String(error)}`);
+			}
 			return telemetry;
 		}
 
@@ -340,17 +311,8 @@ export function createOtelExporter(config: OtelExporterConfig) {
 				recordUserActivity(Date.now());
 				if (!config.events.userPrompt) return;
 
-				const isCommand = event.prompt.startsWith("/");
-				const commandName = isCommand ? event.prompt.slice(1).split(/\s+/)[0] : undefined;
-				tel()?.emitEvent("user_prompt", {
-					...eventBase(),
-					prompt_length: event.prompt.length,
-					prompt: config.content.logUserPrompts ? truncateContent(event.prompt, config.content.maxLength) : REDACTED,
-					...(commandName
-						? { command_name: config.content.logToolDetails ? commandName : "custom", command_source: "custom" }
-						: {}),
-					...modelAttributes(ctx),
-				});
+				const sink = tel();
+				if (sink) recordUserPrompt(sink, config, event.prompt, { ...eventBase(), ...modelAttributes(ctx) });
 			}),
 		);
 
@@ -416,80 +378,16 @@ export function createOtelExporter(config: OtelExporterConfig) {
 				const message = event.message;
 				const request = lastRequest;
 				lastRequest = undefined;
-				const nowMs = Date.now();
-				const durationMs = nowMs - (request?.startMs ?? turnStartMs);
-				const model = message.responseModel ?? message.model;
-				const requestId = message.responseId ?? request?.requestId;
-				const thinkingLevel = pi.getThinkingLevel();
-				const metricAttribution = { model, query_source: "main", effort: message.providerThinkingLevel };
-				const attribution = {
-					...metricAttribution,
-					provider: message.provider,
-					// Providers that report no native effort still have pi's thinking level, unless it is off.
-					effort: message.providerThinkingLevel ?? (thinkingLevel === "off" ? undefined : thinkingLevel),
-				};
 				// Gate on the provider that served this response, not the session's current selection.
 				const sink = tel(message.provider);
-
-				if (message.stopReason === "error") {
-					if (config.events.apiError) {
-						sink?.emitEvent("api_error", {
-							...eventBase(),
-							...attribution,
-							error: message.errorMessage ?? "unknown error",
-							status_code: request?.status,
-							duration_ms: durationMs,
-							attempt: 1,
-							request_id: requestId,
-						});
-					}
-					return;
-				}
-
-				if (message.rawStopReason === "refusal" && config.events.apiRefusal) {
-					sink?.emitEvent("api_refusal", { ...eventBase(), ...attribution, duration_ms: durationMs });
-				}
-
-				const usage = message.usage;
-				if (config.events.apiRequest) {
-					sink?.emitEvent("api_request", {
-						...eventBase(),
-						...attribution,
-						cost_usd: usage.cost.total,
-						cost_usd_micros: costUsdMicros(usage.cost.total),
-						duration_ms: durationMs,
-						input_tokens: usage.input,
-						output_tokens: usage.output,
-						cache_read_tokens: usage.cacheRead,
-						cache_creation_tokens: usage.cacheWrite,
-						reasoning_tokens: usage.reasoning,
-						request_id: requestId,
-						stop_reason: message.stopReason,
-					});
-				}
-
-				if (config.metrics.token) {
-					for (const entry of tokenUsageEntries(usage)) {
-						sink?.addTokens(entry.type, entry.tokens, metricAttribution);
-					}
-				}
-				if (config.metrics.cost) sink?.addCost(usage.cost.total, metricAttribution);
-
-				if (config.events.assistantResponse) {
-					const text = assistantText(message);
-					// Claude Code only logs this event for responses that carry text content.
-					if (text.length > 0) {
-						sink?.emitEvent("assistant_response", {
-							...eventBase(),
-							...attribution,
-							response_length: text.length,
-							response: config.content.logAssistantResponses
-								? truncateContent(text, config.content.maxLength)
-								: REDACTED,
-							request_id: requestId,
-						});
-					}
-				}
+				if (!sink) return;
+				recordAssistantMessage(sink, config, message, {
+					base: eventBase(),
+					durationMs: Date.now() - (request?.startMs ?? turnStartMs),
+					statusCode: request?.status,
+					requestId: request?.requestId,
+					thinkingLevel: pi.getThinkingLevel(),
+				});
 			}),
 		);
 
@@ -532,86 +430,25 @@ export function createOtelExporter(config: OtelExporterConfig) {
 			guard(async (event, ctx) => {
 				const run = toolRuns.get(event.toolCallId);
 				toolRuns.delete(event.toolCallId);
-				const durationMs = run ? Date.now() - run.startMs : 0;
+				const sink = tel();
+				if (!sink) return;
 				const input = run?.input ?? undefined;
-				const resultText = textFromContent((event.result as { content?: unknown } | undefined)?.content);
 				// Blocked calls never reach the tool_result hook, so a missing flag means the call was rejected.
 				const rejected = run !== undefined && !run.executed;
-				const editTool = codeEditToolName(event.toolName);
-				const filePath = filePathFromToolInput(input);
-				const details = detailsOf(event.result);
-				const withDetails = config.content.logToolDetails;
-
-				if (rejected) {
-					if (config.events.toolDecision) {
-						tel()?.emitEvent("tool_decision", {
-							...eventBase(),
-							tool_name: event.toolName,
-							tool_use_id: event.toolCallId,
-							decision: "reject",
-							source: "hook",
-							tool_source: "builtin",
-							...(withDetails ? { tool_parameters: JSON.stringify(toolParameters(event.toolName, input) ?? {}) } : {}),
-						});
-					}
-					if (editTool && config.metrics.codeEditToolDecision) {
-						tel()?.addCodeEditDecision({
-							decision: "reject",
-							source: "hook",
-							tool_name: editTool,
-							language: languageFromPath(filePath),
-						});
-					}
-					return;
-				}
-
-				if (config.events.toolResult) {
-					tel()?.emitEvent("tool_result", {
-						...eventBase(),
-						tool_name: event.toolName,
-						tool_use_id: event.toolCallId,
-						success: event.isError ? "false" : "true",
-						duration_ms: durationMs,
-						error_type: event.isError ? toolErrorType(resultText) : undefined,
-						error: event.isError && withDetails ? truncateContent(resultText, config.content.maxLength) : undefined,
-						decision_type: "accept",
-						decision_source: "config",
-						tool_input_size_bytes: byteLength(
-							serializeToolInput(input, Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER),
-						),
-						tool_result_size_bytes: byteLength(resultText),
-						...(withDetails
-							? {
-									tool_parameters: JSON.stringify(toolParameters(event.toolName, input) ?? {}),
-									tool_input: serializeToolInput(input),
-								}
-							: {}),
-					});
-				}
-
-				if (editTool && config.metrics.codeEditToolDecision) {
-					tel()?.addCodeEditDecision({
-						decision: "accept",
-						source: "config",
-						tool_name: editTool,
-						language: languageFromPath(filePath),
-					});
-				}
-
-				if (!event.isError && config.metrics.linesOfCode && editTool) {
-					const model = ctx.model?.id;
-					const counts = await countChangedLines(run, details, input);
-					if (counts) {
-						tel()?.addLinesOfCode("added", counts.added, model);
-						tel()?.addLinesOfCode("removed", counts.removed, model);
-					}
-				}
-
-				if (isShellTool(event.toolName) && !event.isError) {
-					const command = commandOf(input);
-					if (config.metrics.commit && commandCreatesCommit(command)) tel()?.addCommits(1);
-					if (config.metrics.pullRequest) tel()?.addPullRequests(pullRequestsCreated(command));
-				}
+				const wantsLineCounts =
+					!rejected && !event.isError && config.metrics.linesOfCode && codeEditToolName(event.toolName) !== undefined;
+				recordToolResult(sink, config, {
+					base: eventBase(),
+					toolName: event.toolName,
+					toolCallId: event.toolCallId,
+					input,
+					isError: event.isError,
+					resultText: textFromContent((event.result as { content?: unknown } | undefined)?.content),
+					durationMs: run ? Date.now() - run.startMs : 0,
+					rejected,
+					lineCounts: wantsLineCounts ? await countChangedLines(run, detailsOf(event.result), input) : undefined,
+					model: ctx.model?.id,
+				});
 			}),
 		);
 

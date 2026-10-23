@@ -102,6 +102,21 @@ Metrics are exported with delta temporality, Claude Code's default, so a collect
 
 Run `/otel` to see the active exporters, resolved endpoints, whether this session is exporting, and the last error. The command is available even while telemetry is off, where it reports what is missing.
 
+### Backfilling Past Sessions
+
+Run `/otel backfill` to export sessions saved before telemetry was working, using the current exporter configuration. It replays every session file under `~/.pi/agent/sessions` and asks for confirmation with the number of sessions, events, and metric updates it is about to send.
+
+```text
+/otel backfill [--since 2026-10-01] [--until 2026-10-15T09:00:00Z] [--dry-run] [--yes]
+```
+
+- Events keep their original timestamps, while metrics are stamped with the export time because OpenTelemetry counters cannot be backdated.
+- The same provider restriction, content flags, and identity as live export apply.
+- Durations come from the saved timestamps, and lines of code come from the patch each edit recorded.
+- A session file does not record HTTP status codes or user active time, so those are not reported, and a blocked tool call is reported as a failed `tool_result` instead of a rejected `tool_decision`.
+- Exported ranges are recorded in `~/.pi/agent/pi-enhanced-otel-backfill.json`, so running the command again sends only what is new.
+- The live exporter marks each session when it starts exporting, and a backfill stops at that mark. Sessions exported live by an older version carry no mark, so use `--since` and `--until` to leave them out.
+
 ## Configuration
 
 This package reads the extension-specific configuration from these files, in order:

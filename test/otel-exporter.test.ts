@@ -31,7 +31,11 @@ function fakePi() {
 	const handlers = new Map<string, Handler[]>();
 	const busHandlers = new Map<string, ((data: unknown) => void)[]>();
 	const commands = new Map<string, { handler: (args: string, ctx: unknown) => Promise<void> | void }>();
+	const appended: { customType: string; data: unknown }[] = [];
 	const pi = {
+		appendEntry(customType: string, data?: unknown) {
+			appended.push({ customType, data });
+		},
 		on(event: string, handler: Handler) {
 			const list = handlers.get(event) ?? [];
 			list.push(handler);
@@ -58,7 +62,7 @@ function fakePi() {
 		for (const handler of handlers.get(event) ?? []) await handler({ type: event, ...payload }, ctx);
 	}
 
-	return { pi, fire, handlers, commands };
+	return { pi, fire, handlers, commands, appended };
 }
 
 function fakeCtx(
@@ -791,7 +795,7 @@ function anthropicOnlyConfig(port: number) {
 
 test("borrowed configuration exports nothing for a non anthropic session", async () => {
 	const { server, port, captures } = await startCollector();
-	const { pi, fire } = fakePi();
+	const { pi, fire, appended } = fakePi();
 	createOtelExporter(anthropicOnlyConfig(port))(pi as never);
 	const ctx = fakeCtx([], { id: "gpt-5.6-luna", provider: "openai-codex" });
 
@@ -813,6 +817,22 @@ test("borrowed configuration exports nothing for a non anthropic session", async
 	await new Promise<void>((resolve) => server.close(() => resolve()));
 
 	assert.deepEqual(captures, []);
+	assert.deepEqual(appended, []);
+});
+
+test("the first live export marks the session so a backfill skips what was already sent", async () => {
+	const { server, port } = await startCollector();
+	const { pi, fire, appended } = fakePi();
+	createOtelExporter(metricsOnlyConfig(port))(pi as never);
+	const ctx = fakeCtx();
+
+	await fire("session_start", { reason: "startup" }, ctx);
+	await fire("message_end", { message: assistantMessage() }, ctx);
+	await fire("message_end", { message: assistantMessage() }, ctx);
+	await fire("session_shutdown", { reason: "quit" }, ctx);
+	await new Promise<void>((resolve) => server.close(() => resolve()));
+
+	assert.deepEqual(appended, [{ customType: "otel-export", data: { sessionId: "session-test" } }]);
 });
 
 test("borrowed configuration still exports an anthropic session", async () => {
